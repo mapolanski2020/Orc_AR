@@ -73,6 +73,8 @@ final class GameController: NSObject, ObservableObject, ARSCNViewDelegate {
     @Published var warnR = false
     @Published var hurt = false
     @Published var trackingMsg = "Iniciando a câmera…"
+    @Published var placeScale: Double = 1 { didSet { lock.lock(); pScale = Float(placeScale); lock.unlock() } }
+    var sizeLabel: String { String(format: "%.1f m", 9.3 * Double(S) * placeScale).replacingOccurrences(of: ".", with: ",") }
     @Published var best = UserDefaults.standard.integer(forKey: "orcBest")
 
     private weak var view: ARSCNView?
@@ -105,6 +107,7 @@ final class GameController: NSObject, ObservableObject, ARSCNViewDelegate {
     private let lock = NSLock()
     private var pThrows: [(SIMD3<Float>, SIMD3<Float>)] = []
     private var pPlace = false, pRestart = false, pRescan = false
+    private var pScale: Float = 1
     private var toastID = 0
 
     private let HIT_R: Float = 0.6
@@ -133,6 +136,9 @@ final class GameController: NSObject, ObservableObject, ARSCNViewDelegate {
         v.scene.rootNode.addChildNode(sun)
         reticle.isHidden = true
         v.scene.rootNode.addChildNode(reticle)
+        buildArena()
+        anchorNode.isHidden = true
+        v.scene.rootNode.addChildNode(anchorNode)
         let c = ARWorldTrackingConfiguration()
         c.planeDetection = [.horizontal]
         c.environmentTexturing = .automatic
@@ -197,7 +203,6 @@ final class GameController: NSObject, ObservableObject, ARSCNViewDelegate {
 
     func tap(at pt: CGPoint) {
         guard let v = view else { return }
-        if phase == .scanning { placeScenery(); return }
         guard phase == .playing else { return }
         let a = v.unprojectPoint(SCNVector3(Float(pt.x), Float(pt.y), 0))
         let b = v.unprojectPoint(SCNVector3(Float(pt.x), Float(pt.y), 1))
@@ -227,10 +232,11 @@ final class GameController: NSObject, ObservableObject, ARSCNViewDelegate {
         let place = pPlace; pPlace = false
         let restartNow = pRestart; pRestart = false
         let rescanNow = pRescan; pRescan = false
+        let scaleNow = pScale
         lock.unlock()
 
         if rescanNow { doRescan(v) }
-        if restartNow && sPhase == .over { clearArena(); resetStats(); buildArena(eye: playerLocal(pov)); startFixing() }
+        if restartNow && sPhase == .over { clearArena(); resetStats(); buildArena(); startFixing() }
 
         if sPhase == .scanning {
             // 1) ESCANEAR: procura o plano do chão no centro da tela
@@ -246,10 +252,18 @@ final class GameController: NSObject, ObservableObject, ARSCNViewDelegate {
             let found = hitPose != nil
             if found != lastPlaneFound { lastPlaneFound = found; ui { self.planeFound = found } }
 
-            // 2) FIXAR: cria a âncora no chão, com você no centro, e monta o cenário
-            if place, let hp = hitPose {
-                let cam = pov.simdWorldPosition
-                center = SIMD3<Float>(cam.x, hp.columns.3.y, cam.z)
+            // 2) ESCOLHER: o cenário aparece como prévia onde você mira, no tamanho escolhido
+            root.simdScale = SIMD3<Float>(repeating: S * scaleNow)
+            if let hp = hitPose {
+                let target = SIMD3<Float>(hp.columns.3.x, hp.columns.3.y, hp.columns.3.z)
+                anchorNode.simdPosition = anchorNode.isHidden ? target : simd_mix(anchorNode.simdPosition, target, SIMD3<Float>(repeating: 0.3))
+                anchorNode.simdOrientation = simd_quatf(angle: 0, axis: SIMD3<Float>(0, 1, 0))
+                anchorNode.isHidden = false
+            }
+
+            // 3) FIXAR: só quando você toca em "Fixar cenário aqui"
+            if place, hitPose != nil {
+                center = anchorNode.simdPosition
                 var t = matrix_identity_float4x4
                 t.columns.3 = SIMD4<Float>(center.x, center.y, center.z, 1)
                 let a = ARAnchor(name: "arena", transform: t)
@@ -257,9 +271,7 @@ final class GameController: NSObject, ObservableObject, ARSCNViewDelegate {
                 v.session.add(anchor: a)
                 reticle.isHidden = true
                 for pn in planeNodes.values { pn.isHidden = true }
-                clearArena()
                 resetStats()
-                buildArena(eye: (cam - center) / S)
                 startFixing()
             }
             return
@@ -323,7 +335,10 @@ final class GameController: NSObject, ObservableObject, ARSCNViewDelegate {
         if let a = anchor { v.session.remove(anchor: a) }
         anchor = nil
         anchorNode.removeFromParentNode()
+        anchorNode.isHidden = true
+        v.scene.rootNode.addChildNode(anchorNode)
         clearArena()
+        buildArena()
         sPhase = .scanning
         for pn in planeNodes.values { pn.isHidden = false }
         ui { self.phase = .scanning; self.showFoe = false; self.finder = nil }
@@ -332,17 +347,17 @@ final class GameController: NSObject, ObservableObject, ARSCNViewDelegate {
     private func playerLocal(_ pov: SCNNode) -> SIMD3<Float> {
         let w = pov.simdWorldPosition
         if anchorNode.parent != nil { return root.simdConvertPosition(w, from: nil) }
-        return (w - center) / S
+        return (w - center) / (S * pScale)
     }
 
     private func toLocal(_ wp: SIMD3<Float>) -> SIMD3<Float> {
         if anchorNode.parent != nil { return root.simdConvertPosition(wp, from: nil) }
-        return (wp - center) / S
+        return (wp - center) / (S * pScale)
     }
 
     private func toWorld(_ lp: SIMD3<Float>) -> SIMD3<Float> {
         if anchorNode.parent != nil { return root.simdConvertPosition(lp, to: nil) }
-        return lp * S + center
+        return lp * (S * pScale) + center
     }
 
     // MARK: Cenário
@@ -359,18 +374,16 @@ final class GameController: NSObject, ObservableObject, ARSCNViewDelegate {
         ui { self.hurt = false; self.finder = nil }
     }
 
-    private func buildArena(eye: SIMD3<Float>) {
-        root.addChildNode(Make.arenaRing(7.1))
+    private func buildArena() {
+        root.addChildNode(Make.arenaRing(4.62))
         let kinds: [CoverKind] = [.tree, .rock, .tree, .stump, .rock, .tree, .rock, .tree, .stump]
-        let e2 = SIMD2<Float>(eye.x, eye.z)
         var tries = 0
         while covers.count < kinds.count && tries < 600 {
             tries += 1
-            let a = Float(covers.count) / Float(kinds.count) * 2 * .pi + Float.random(in: -0.25...0.25)
-            let r = Float.random(in: 2.8...6.3)
+            let a = Float(covers.count) / Float(kinds.count) * 2 * .pi + Float.random(in: -0.3...0.3)
+            let r = covers.count % 3 == 0 ? Float.random(in: 0.9...1.8) : Float.random(in: 2.2...4.0)
             let p = SIMD2<Float>(cos(a) * r, sin(a) * r)
-            if simd_distance(p, e2) < 2.6 { continue }
-            if covers.contains(where: { simd_distance($0.p, p) < 1.7 }) { continue }
+            if covers.contains(where: { simd_distance($0.p, p) < 1.5 }) { continue }
             let k = kinds[covers.count]
             let node: SCNNode
             let cr: Float, ch: Float
@@ -391,9 +404,9 @@ final class GameController: NSObject, ObservableObject, ARSCNViewDelegate {
     // MARK: Orc
 
     private func spawnOrc(_ eye: SIMD3<Float>) {
-        let a = Float.random(in: 0...(2 * .pi))
+        let a = atan2(-eye.z, -eye.x) + Float.random(in: -1.2...1.2)   // entra pelo lado oposto ao seu
         let hp = 3 + (sWave - 1) / 2
-        let o = Orc(x: eye.x + cos(a) * 8, z: eye.z + sin(a) * 8, hp: hp,
+        let o = Orc(x: cos(a) * 5.6, z: sin(a) * 5.6, hp: hp,
                     name: NAMES[(sWave - 1) % NAMES.count], speed: 2.6 + Float(sWave) * 0.25)
         o.rig.node.simdPosition = SIMD3<Float>(o.x, 0, o.z)
         root.addChildNode(o.rig.node)

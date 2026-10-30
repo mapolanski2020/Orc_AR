@@ -23,6 +23,8 @@ struct ARContainer: UIViewRepresentable {
         game.attach(v)
         let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.tapped(_:)))
         v.addGestureRecognizer(tap)
+        let pinch = UIPinchGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.pinched(_:)))
+        v.addGestureRecognizer(pinch)
         return v
     }
 
@@ -33,6 +35,12 @@ struct ARContainer: UIViewRepresentable {
     final class Coordinator: NSObject {
         let game: GameController
         init(game: GameController) { self.game = game }
+        private var startScale: Double = 1
+        @objc func pinched(_ g: UIPinchGestureRecognizer) {
+            guard game.phase == .scanning else { return }
+            if g.state == .began { startScale = game.placeScale }
+            if g.state == .changed { game.placeScale = min(2.5, max(0.2, startScale * Double(g.scale))) }
+        }
         @objc func tapped(_ g: UITapGestureRecognizer) {
             guard let v = g.view else { return }
             game.tap(at: g.location(in: v))
@@ -75,7 +83,7 @@ struct StartView: View {
                 .font(.system(size: 18)).foregroundColor(.bone.opacity(0.75))
             VStack(alignment: .leading, spacing: 10) {
                 Step(n: "1", t: "Escaneie o chão", d: "Mova o iPad devagar apontando para o piso.")
-                Step(n: "2", t: "Fixe o cenário", d: "Árvores, pedras e tocos ficam presos ao seu redor.")
+                Step(n: "2", t: "Escolha o lugar e o tamanho", d: "Mire no chão e ajuste com dois dedos. Depois toque em Fixar.")
                 Step(n: "3", t: "Cace o orc", d: "Ele entra depois. Ande, procure e toque para lançar bombas.")
             }
             .padding(.vertical, 6)
@@ -235,20 +243,31 @@ struct HUD: View {
         case .scanning:
             VStack(spacing: 12) {
                 Text(game.planeFound
-                     ? "Chão encontrado. Fique no lugar onde quer jogar e fixe o cenário."
+                     ? "2 · Mire onde quer o cenário. Use dois dedos (pinça) ou o controle para ajustar o tamanho."
                      : "1 · Escaneando… mova o iPad devagar apontando para o chão até aparecer o anel laranja.")
                     .font(.system(size: 17, weight: .semibold)).foregroundColor(.bone)
-                    .multilineTextAlignment(.center)
-                    .padding(14).background(RoundedRectangle(cornerRadius: 14).fill(Color.panel))
+                    .multilineTextAlignment(.leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if game.planeFound {
+                    HStack(spacing: 12) {
+                        Text("TAMANHO").font(.system(size: 13, weight: .bold)).tracking(1.2).foregroundColor(.bone.opacity(0.6))
+                        Slider(value: $game.placeScale, in: 0.2...2.5).tint(.ember)
+                        Text(game.sizeLabel).font(.system(size: 16, weight: .bold).monospacedDigit()).foregroundColor(.ember)
+                            .frame(minWidth: 60, alignment: .trailing)
+                    }
+                }
                 Button(action: game.placeScenery) {
-                    Text("2 · Fixar cenário aqui")
+                    Text("3 · Fixar cenário aqui")
                         .font(.system(size: 19, weight: .bold))
-                        .padding(.horizontal, 26).padding(.vertical, 15)
+                        .frame(maxWidth: .infinity).padding(.vertical, 15)
                         .foregroundColor(.black)
-                        .background(Capsule().fill(game.planeFound ? Color.ember : Color.gray.opacity(0.5)))
+                        .background(RoundedRectangle(cornerRadius: 14).fill(game.planeFound ? Color.ember : Color.gray.opacity(0.5)))
                 }
                 .disabled(!game.planeFound)
             }
+            .padding(16)
+            .frame(maxWidth: 460)
+            .background(RoundedRectangle(cornerRadius: 18).fill(Color.panel))
         case .fixing:
             Text("Cenário fixado. O orc está chegando…")
                 .font(.system(size: 17, weight: .semibold)).foregroundColor(.bone)
