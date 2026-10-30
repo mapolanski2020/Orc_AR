@@ -625,15 +625,21 @@ async function startSLAM(){
   let AlvaAR;
   try{({AlvaAR}=await import('./alva_ar.js'))}catch(e){note('Não consegui carregar o rastreamento. Abra o jogo pelo link do GitHub Pages.',true);return}
   try{
-    const s=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment',width:{ideal:1280},height:{ideal:720}},audio:false});
+    const s=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment',aspectRatio:{ideal:4/3},width:{ideal:1280}},audio:false});
     const v=$('video');v.srcObject=s;v.hidden=false;await v.play().catch(()=>{});
     if(!v.videoWidth)await new Promise(r=>v.addEventListener('loadedmetadata',r,{once:true}));
   }catch(e){note('A câmera foi bloqueada. Permita o acesso à câmera para jogar em AR.',true);return}
   const long=640,ar=innerWidth/innerHeight;
   const w=ar>=1?long:Math.round(long*ar),h=ar>=1?Math.round(long/ar):long;
-  if(!slam.alva||slam.w!==w||slam.h!==h){
+  // Ângulo de visão real: lente grande-angular (~65° no lado maior do sensor), ajustado ao recorte mostrado na tela
+  const v=$('video'),vw=v.videoWidth,vh=v.videoHeight;
+  const fVid=(Math.max(vw,vh)/2)/Math.tan(65/2*Math.PI/180);
+  const srcW=(vw/vh)>(w/h)?vh*(w/h):vw;
+  const fProc=fVid*(w/srcW);
+  const fov=Math.round((w<h?2*Math.atan((w/2)/fProc):2*Math.atan((h/2)/fProc))*180/Math.PI*10)/10;
+  if(!slam.alva||slam.w!==w||slam.h!==h||slam.fov!==fov){
     const cv=document.createElement('canvas');cv.width=w;cv.height=h;slam.ctx=cv.getContext('2d',{willReadFrequently:true});
-    slam.alva=await AlvaAR.Initialize(w,h);slam.w=w;slam.h=h;
+    slam.alva=await AlvaAR.Initialize(w,h,fov);slam.w=w;slam.h=h;slam.fov=fov;
   }else slam.alva.reset();
   camera.fov=2*Math.atan(h/2/slam.alva.intrinsics.fy)*180/Math.PI;camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();
   st.mode='slam';setVirtual(false);rig.position.set(0,0,0);camera.position.set(0,0,0);camera.quaternion.identity();
