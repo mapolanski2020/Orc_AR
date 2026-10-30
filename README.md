@@ -1,7 +1,7 @@
 # Caça ao Orc — AR
 
 Jogo 3D em realidade aumentada que roda direto no navegador do celular (Three.js + WebXR).
-Um orc invade o ambiente, corre entre árvores, pedras e tocos, se esconde do lado oposto ao seu,
+Primeiro o cenário (árvores, pedras e tocos) é fixado ao seu redor; depois o orc entra e anda por ele. Você gira o corpo para procurá-lo (uma seta verde aponta a direção). Ele se esconde do lado oposto ao seu,
 sai para espiar e joga machadinhas, flechas e pedras. Você revida com bombas.
 
 **Jogar:** https://mapolanski2020.github.io/Orc_AR/
