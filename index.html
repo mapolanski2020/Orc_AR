@@ -19,6 +19,7 @@ body{background:var(--ink);color:var(--bone);font-family:var(--ui);overflow:hidd
   -webkit-user-select:none;user-select:none;touch-action:none;-webkit-tap-highlight-color:transparent}
 #video{position:fixed;inset:0;width:100%;height:100%;object-fit:cover;z-index:0}
 #gl{position:fixed;inset:0;width:100%;height:100%;z-index:1;display:block}
+#dots{position:fixed;inset:0;width:100%;height:100%;z-index:2;pointer-events:none}
 #hud{position:fixed;inset:0;z-index:5;pointer-events:none;
   padding:calc(12px + env(safe-area-inset-top,0px)) max(14px,env(safe-area-inset-right,0px)) calc(14px + env(safe-area-inset-bottom,0px)) max(14px,env(safe-area-inset-left,0px))}
 #hud.shake{animation:shake .32s}
@@ -88,6 +89,7 @@ h1 em{font-style:normal;color:var(--orc)}
 
 <video id="video" playsinline muted autoplay hidden></video>
 <canvas id="gl"></canvas>
+<canvas id="dots" hidden></canvas>
 <div id="vig"></div><div class="warn" id="warnL"></div><div class="warn" id="warnR"></div>
 
 <div id="hud" hidden>
@@ -126,8 +128,8 @@ h1 em{font-style:normal;color:var(--orc)}
       <li><b>Pontos</b>Acerto vale 25 × onda; derrubar o orc vale 100 × onda.</li>
     </ul>
     <div class="actions">
-      <button class="btn big primary" id="bAR" hidden>Jogar em AR <small>escaneia o chão</small></button>
-      <button class="btn big primary" id="bCam">Usar a câmera <small>orc sobre a imagem real</small></button>
+      <button class="btn big primary" id="bAR">Jogar em AR <small>escaneia o chão</small></button>
+      <button class="btn big" id="bCam" hidden>Usar a câmera <small>só giro</small></button>
       <button class="btn big" id="bVirt">Jogar na floresta 3D <small>sem câmera</small></button>
     </div>
     <p class="note" id="note">Para o modo AR completo (escanear o chão e andar pelo ambiente), abra o arquivo HTML no Chrome do Android por um endereço HTTPS.</p>
@@ -515,7 +517,7 @@ function applyOrientation(){
   const so=(screen.orientation&&screen.orientation.angle)||window.orientation||0;camera.quaternion.multiply(q0.setFromAxisAngle(zee,-so*D));
 }
 function updateCamera(dt){
-  if(st.mode==='ar')return;
+  if(st.mode==='ar'||st.mode==='slam')return;
   st.dodgeT-=dt;if(st.dodgeT<=0)st.dodge=0;
   rig.position.x+=(st.dodge-rig.position.x)*Math.min(1,dt*14);
   if(st.mode==='camera'&&st.orient)applyOrientation();
@@ -553,13 +555,26 @@ controller.addEventListener('select',()=>{
   throwBomb(o,new V3(0,0,-1).applyQuaternion(q));
 });
 /* ---------- Escolher o lugar e o tamanho ---------- */
-function setScale(v){st.placeScale=clamp(v,.15,2);$('scale').value=st.placeScale;$('szv').textContent=(9.3*st.placeScale).toFixed(1).replace('.',',')+' m'}
+function setScale(v){st.placeScale=clamp(v,.15,2);$('scale').value=st.placeScale;const m=st.mode==='slam'?2*st.placeScale:st.mode==='ar'?9.3*st.placeScale:9.3*st.placeScale*(st.mode==='camera'?1:1);$('szv').textContent=m.toFixed(1).replace('.',',')+' m'}
 function beginPlacement(){
   st.placed=false;root.visible=st.mode!=='ar';setScale(st.placeScale);
   $('place').hidden=false;document.querySelector('#hud .bottom').hidden=true;$('foe').hidden=true;$('cross').hidden=st.mode==='ar';
   $('hint').textContent='';
 }
 function updatePlacement(){
+  if(st.mode==='slam'){
+    const pl=slam.plane,ok=!!pl&&slam.status===1;
+    if(pl){
+      const o=new V3(),d=new V3();camera.getWorldPosition(o);camera.getWorldDirection(d);const den=d.dot(pl.n);
+      if(den<-1e-3){const t=pl.p.clone().sub(o).dot(pl.n)/den;if(t>0&&t<60*slam.unit){const hit=o.addScaledVector(d,t);if(!root.visible)root.position.copy(hit);else root.position.lerp(hit,.35)}}
+      root.quaternion.setFromUnitVectors(new V3(0,1,0),pl.n);root.scale.setScalar(slam.unit*st.placeScale);
+    }
+    root.visible=ok;$('bFix').disabled=!ok;
+    $('placeTxt').textContent=slam.status!==1?'1 · Iniciando: mova o aparelho devagar de um lado para o outro, apontando para o chão com boa luz.'
+      :!pl?'1 · Escaneando o chão… continue movendo devagar até o cenário aparecer.'
+      :'2 · Mire onde quer o cenário e ajuste o tamanho com dois dedos. Depois toque em Fixar.';
+    return;
+  }
   root.scale.setScalar(st.placeScale);
   if(st.mode==='ar'){
     root.visible=reticle.visible;if(reticle.visible)root.position.setFromMatrixPosition(reticle.matrix);
@@ -573,12 +588,13 @@ function updatePlacement(){
   $('placeTxt').textContent=st.mode==='camera'?'Aponte para o chão e mire onde quer o cenário. Dois dedos ajustam o tamanho.':'Arraste para mirar no chão. Dois dedos ou o controle ajustam o tamanho.';
 }
 function fixScenery(){
-  if(st.placed||(st.mode==='ar'&&!reticle.visible))return;
-  audio();st.placed=true;root.visible=true;reticle.visible=false;
+  if(st.placed||(st.mode==='ar'&&!reticle.visible)||(st.mode==='slam'&&!(slam.plane&&slam.status===1)))return;
+  audio();st.placed=true;root.visible=true;reticle.visible=false;const relocating=!!orc;
   $('place').hidden=true;document.querySelector('#hud .bottom').hidden=false;
-  $('cross').hidden=st.mode==='ar';$('dl').hidden=$('dr').hidden=st.mode==='ar';
-  st.first=true;nextOrcT=2.2;toast('Cenário fixado',1400);
-  $('hint').textContent=st.mode==='ar'?'Ande pelo ambiente e procure o orc · toque para lançar':st.mode==='camera'&&st.orient?'Gire com o aparelho e procure o orc · toque para lançar':'Arraste para girar e achar o orc · toque para lançar';
+  const phys=st.mode==='ar'||st.mode==='slam';
+  $('cross').hidden=st.mode==='ar';$('dl').hidden=$('dr').hidden=false;$('dl').style.visibility=$('dr').style.visibility=phys?'hidden':'visible';
+  if(!relocating){st.first=true;nextOrcT=2.2}toast('Cenário fixado',1400);
+  $('hint').textContent=phys?'Ande pelo ambiente e procure o orc · toque para lançar':st.mode==='camera'&&st.orient?'Gire com o aparelho e procure o orc · toque para lançar':'Arraste para girar e achar o orc · toque para lançar';
 }
 $('bFix').addEventListener('click',fixScenery);
 $('scale').addEventListener('input',e=>setScale(+e.target.value));
@@ -598,6 +614,60 @@ async function startAR(){
     $('dl').hidden=$('dr').hidden=true;
     root.position.set(0,-50,0);root.rotation.set(0,0,0);st.placeScale=.4;buildArena();beginPlacement();
   }catch(e){note('Não foi possível iniciar o AR neste aparelho ('+(e.message||e.name)+').',true)}
+}
+
+/* ---------- AR por visão: rastreamento SLAM no navegador (AlvaAR) ---------- */
+const slam={alva:null,ctx:null,w:0,h:0,plane:null,unit:1,status:0,frame:0};
+const dotsCv=$('dots'),dotsCtx=dotsCv.getContext('2d');
+function applyPose(pose,q,p){const m=new THREE.Matrix4().fromArray(pose),r=new THREE.Quaternion().setFromRotationMatrix(m);q.set(-r.x,r.y,r.z,r.w);p.set(pose[12],-pose[13],-pose[14])}
+async function startSLAM(){
+  audio();note('Carregando o rastreamento…');
+  let AlvaAR;
+  try{({AlvaAR}=await import('./alva_ar.js'))}catch(e){note('Não consegui carregar o rastreamento. Abra o jogo pelo link do GitHub Pages.',true);return}
+  try{
+    const s=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment',width:{ideal:1280},height:{ideal:720}},audio:false});
+    const v=$('video');v.srcObject=s;v.hidden=false;await v.play().catch(()=>{});
+    if(!v.videoWidth)await new Promise(r=>v.addEventListener('loadedmetadata',r,{once:true}));
+  }catch(e){note('A câmera foi bloqueada. Permita o acesso à câmera para jogar em AR.',true);return}
+  const long=640,ar=innerWidth/innerHeight;
+  const w=ar>=1?long:Math.round(long*ar),h=ar>=1?Math.round(long/ar):long;
+  if(!slam.alva||slam.w!==w||slam.h!==h){
+    const cv=document.createElement('canvas');cv.width=w;cv.height=h;slam.ctx=cv.getContext('2d',{willReadFrequently:true});
+    slam.alva=await AlvaAR.Initialize(w,h);slam.w=w;slam.h=h;
+  }else slam.alva.reset();
+  camera.fov=2*Math.atan(h/2/slam.alva.intrinsics.fy)*180/Math.PI;camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();
+  st.mode='slam';setVirtual(false);rig.position.set(0,0,0);camera.position.set(0,0,0);camera.quaternion.identity();
+  slam.plane=null;slam.status=0;slam.frame=0;
+  root.position.set(0,0,0);root.quaternion.identity();
+  clearArena();resetStats();showHud();st.placeScale=1;buildArena();beginPlacement();root.visible=false;
+  $('dl').hidden=$('dr').hidden=true;dotsCv.hidden=false;dotsCv.width=innerWidth;dotsCv.height=innerHeight;
+}
+function slamFrame(){
+  const v=$('video'),a=slam.alva;if(!v.videoWidth||!a)return;
+  const vr=v.videoWidth/v.videoHeight,cr=slam.w/slam.h;let sx=0,sy=0,sw=v.videoWidth,sh=v.videoHeight;
+  if(vr>cr){sw=sh*cr;sx=(v.videoWidth-sw)/2}else{sh=sw/cr;sy=(v.videoHeight-sh)/2}
+  slam.ctx.drawImage(v,sx,sy,sw,sh,0,0,slam.w,slam.h);
+  const img=slam.ctx.getImageData(0,0,slam.w,slam.h);
+  a.memImg.write(img.data);
+  const status=a.system.findCameraPose(a.memImg.heap.byteOffset,a.memCam.ptr);
+  slam.status=status;
+  if(status===1){
+    applyPose(a.memCam.read(16),camera.quaternion,camera.position);
+    if(!st.placed&&!slam.plane&&(slam.frame++%6===0)){
+      const pp=a.findPlane(200);
+      if(pp){const q=new THREE.Quaternion(),p=new V3();applyPose(pp,q,p);const n=new V3(0,0,1).applyQuaternion(q).normalize();
+        const toCam=camera.position.clone().sub(p);if(n.dot(toCam)<0)n.negate();
+        const hgt=Math.abs(n.dot(toCam));if(hgt>1e-4){slam.plane={p,n};slam.unit=hgt*.16}}
+    }
+  }else if(status===2){
+    slam.plane=null;
+    if(st.placed){st.placed=false;for(const q of projs)root.remove(q.mesh);projs=[];beginPlacement();toast('Rastreamento perdido. Reposicione o cenário.',1800)}
+  }
+  dotsCtx.clearRect(0,0,dotsCv.width,dotsCv.height);
+  if(!st.placed){
+    const k=dotsCv.width/slam.w;dotsCtx.fillStyle='#ff8a2b';
+    for(const pt of a.getFramePoints())dotsCtx.fillRect(pt.x*k-2,pt.y*k-2,4,4);
+  }
 }
 
 /* ---------- Fluxo ---------- */
@@ -630,14 +700,15 @@ function gameOver(){
   $('fdet').textContent=`Onda ${st.wave} · ${st.kills} ${st.kills===1?'orc derrubado':'orcs derrubados'} · recorde ${best}`;
   setTimeout(()=>{if(xrSession)xrSession.end();$('over').hidden=false;$('hud').hidden=true},700);
 }
-function toMenu(){stopCamera();if(xrSession)xrSession.end();st.mode='menu';$('over').hidden=true;$('hud').hidden=true;$('finder').hidden=true;$('menu').hidden=false;attract()}
+function toMenu(){stopCamera();$('dots').hidden=true;camera.fov=68;camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();if(xrSession)xrSession.end();st.mode='menu';$('over').hidden=true;$('hud').hidden=true;$('finder').hidden=true;$('menu').hidden=false;attract()}
 function attract(){setVirtual(true);rig.position.set(0,1.6,0);st.yaw=0;st.pitch=-.2;root.position.set(0,0,-6);root.scale.setScalar(1);root.visible=true;clearArena();
   const m=st.mode;st.mode='virtual';buildArena();spawnOrc();st.mode='menu';$('foe').hidden=true}
 $('bVirt').onclick=()=>{audio();startFlat('virtual')};
-$('bCam').onclick=startCamera;$('bAR').onclick=startAR;
-$('bAgain').onclick=()=>{audio();if(lastMode==='ar')startAR();else if(lastMode==='camera')startFlat('camera');else startFlat('virtual')};
+$('bCam').onclick=startCamera;$('bAR').onclick=()=>{if(xrOK)startAR();else startSLAM()};
+$('bAgain').onclick=()=>{audio();if(lastMode==='ar')startAR();else if(lastMode==='slam')startSLAM();else if(lastMode==='camera')startFlat('camera');else startFlat('virtual')};
 $('bMenu').onclick=toMenu;
-if(navigator.xr&&navigator.xr.isSessionSupported){navigator.xr.isSessionSupported('immersive-ar').then(ok=>{if(ok){$('bAR').hidden=false;$('bCam').classList.remove('primary');note('Seu aparelho suporta AR completo. Jogue em pé, num espaço livre de uns 2 metros.')}}).catch(()=>{})}
+let xrOK=false;if(navigator.xr&&navigator.xr.isSessionSupported){navigator.xr.isSessionSupported('immersive-ar').then(ok=>{xrOK=ok}).catch(()=>{})}
+note('Toque em Jogar em AR, permita a câmera e mova o aparelho devagar apontando para o chão, com boa luz. Jogue em pé, num espaço livre de uns 2 metros.');
 
 /* ---------- Loop ---------- */
 const clock=new THREE.Clock();
@@ -645,6 +716,7 @@ renderer.setAnimationLoop((t,frame)=>{
   const dt=Math.min(clock.getDelta(),.05);
   if(frame&&hitSource&&!st.placed){const r=frame.getHitTestResults(hitSource);
     if(r.length){const pose=r[0].getPose(renderer.xr.getReferenceSpace());reticle.visible=true;reticle.matrix.fromArray(pose.transform.matrix)}else reticle.visible=false}
+  if(st.mode==='slam')slamFrame();
   updateCamera(dt);
   if(st.mode!=='menu'&&!st.placed)updatePlacement();
   if(st.mode==='menu'){ if(orc){if(orc.state==='windup'){orc.state='recover';orc.timer=.3}updateOrc(dt)} }
