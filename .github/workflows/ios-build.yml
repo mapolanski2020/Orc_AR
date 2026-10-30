@@ -1,0 +1,19 @@
+name: Compilar app iPad
+on:
+  push:
+    paths: ['OrcAR.swiftpm/**', '.github/workflows/ios-build.yml']
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Listar esquemas
+        working-directory: OrcAR.swiftpm
+        run: xcodebuild -list || true
+      - name: Compilar para o simulador de iPad
+        working-directory: OrcAR.swiftpm
+        run: |
+          set -o pipefail
+          xcodebuild build -scheme "Caça ao Orc" -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO 2>&1 | tee build.log | grep -E "error|warning: unre|BUILD" || true
+          grep -q "BUILD SUCCEEDED" build.log
