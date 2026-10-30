@@ -6,7 +6,17 @@ sai para espiar e joga machadinhas, flechas e pedras. Você revida com bombas.
 
 **Jogar:** https://mapolanski2020.github.io/Orc_AR/
 
-## Modos
+## App para iPad e iPhone (ARKit) — recomendado no iOS
+Na pasta `OrcAR.swiftpm` está o app nativo. Ele **escaneia o plano do chão, fixa o cenário** (árvores, pedras e tocos presos ao chão real por uma âncora do ARKit) e **só depois o orc entra** e anda por esse cenário fixo. Você anda pelo ambiente procurando por ele.
+
+1. Instale o **Swift Playgrounds** (gratuito, App Store).
+2. Neste repositório: **Code → Download ZIP**. Abra o ZIP no app Arquivos.
+3. Toque em **OrcAR.swiftpm** (abre no Swift Playgrounds) e depois em **▶ Executar**.
+4. Permita a câmera, escaneie o chão, toque em **Fixar cenário aqui** e cace o orc.
+
+Também abre no Xcode, no Mac, para instalar ou publicar na App Store.
+
+## Versão web — Modos
 | Modo | Onde funciona | Como é |
 |---|---|---|
 | **Jogar em AR** | Chrome no Android (ARCore) | Escaneia o chão, toque no anel laranja para colocar a arena. Ande para desviar. |
