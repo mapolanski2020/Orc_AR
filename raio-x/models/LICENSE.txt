@@ -1,0 +1,6 @@
+Modelos 3D de anatomia (head.glb, hand.glb) derivados de:
+BodyParts3D, © The Database Center for Life Science (DBCLS), licenciado sob
+Creative Commons Atribuição-Compartilhamento pela mesma licença 2.1 Japão (CC BY-SA 2.1 JP).
+https://lifesciencedb.jp/bp3d/ — https://creativecommons.org/licenses/by-sa/2.1/jp/
+Alterações: seleção de estruturas, redução de malha, alinhamento ao modelo facial canônico do MediaPipe.
+Estes arquivos derivados são distribuídos sob a mesma licença CC BY-SA 2.1 JP.
