@@ -190,8 +190,8 @@ function updateFace(lms){
   const open = ang;
   if (jawBase === null) jawBase = open;
   if (open < jawBase) jawBase = open; else jawBase += (open - jawBase) * 0.003;
-  const target = Math.max(0, Math.min(0.6, (open - jawBase) * 1.15));
-  jawAngle += (target - jawAngle) * 0.6;
+  const target = Math.max(0, Math.min(0.75, (open - jawBase) * 2.0));
+  jawAngle += (target - jawAngle) * 0.7;
   // face 2D (screen) for outline
   face2D = lms;
 }
@@ -231,7 +231,7 @@ function updateHands(list){
     pm.matrixWorldNeedsUpdate = true;
     const B = ANAT.hand.bones;
     // thumb: metacarpal L1->L2, proximal L2->L3, distal L3->L4
-    setSeg(sl.bones.f1_0, P[1], P[2], n, right); setSeg(sl.bones.f1_1, P[2], P[3], n, right); setSeg(sl.bones.f1_2, P[3], P[4], n, right);
+    setSeg(sl.bones.f1_0, palmPt(B.f1_0.p0palm), P[2], n, right); /* base anchored on the trapezium */ setSeg(sl.bones.f1_1, P[2], P[3], n, right); setSeg(sl.bones.f1_2, P[3], P[4], n, right);
     const MCP = [5, 9, 13, 17];
     for (let fi = 2; fi <= 5; fi++) {
       const b = MCP[fi-2];
