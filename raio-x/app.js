@@ -10,7 +10,7 @@ try { const s = JSON.parse(localStorage.getItem("xray3d")||"null"); if (s) S = O
 const save = () => { try { localStorage.setItem("xray3d", JSON.stringify(S)); } catch(e){} };
 
 const $ = id => document.getElementById(id);
-const video = $("video"), glc = $("gl"), ov = $("overlay"), ctx = ov.getContext("2d");
+const video = $("video"), bg = $("bg"), bgx = bg.getContext("2d"), glc = $("gl"), ov = $("overlay"), ctx = ov.getContext("2d");
 const statusEl = $("status");
 const setStatus = (t, hide) => { statusEl.textContent = t; statusEl.style.opacity = hide ? 0 : 1; };
 let W = innerWidth, H = innerHeight, DPR = Math.min(devicePixelRatio||1, 2);
@@ -27,10 +27,10 @@ function syncUI(){
   document.querySelectorAll("[data-preset]").forEach(b => b.classList.toggle("on", b.dataset.preset === p));
   glc.classList.toggle("xray", S.look === "xray");
   if (S.look === "xray") {
-    video.style.filter = "grayscale(1) contrast(1.15) brightness(" + (0.5 + S.through*0.7).toFixed(2) + ")";
+    bg.style.filter = "grayscale(1) contrast(1.15) brightness(" + (0.5 + S.through*0.7).toFixed(2) + ")";
     $("tint").style.opacity = (1 - S.through).toFixed(2); glc.style.opacity = 1;
   } else {
-    video.style.filter = "none"; $("tint").style.opacity = 0;
+    bg.style.filter = "none"; $("tint").style.opacity = 0;
     glc.style.opacity = (1 - S.through*0.75).toFixed(2);
   }
   applyLook();
@@ -163,31 +163,44 @@ function fitSimilarity(src, dst){ // returns {s, q, t} with dst ≈ s R src + t
   return { s, q, t };
 }
 
+// ============================================================ filters (One Euro: smooth when still, no lag when moving)
+const alphaOf = (cut, dt) => { const tau = 1/(2*Math.PI*cut); return 1/(1 + tau/dt); };
+class OneEuro { constructor(minCut, beta){ this.mc = minCut; this.b = beta; this.x = null; this.dx = 0; }
+  f(x, dt){ if (this.x === null) { this.x = x; return x; }
+    const dx = (x - this.x)/dt; this.dx += (dx - this.dx)*alphaOf(1, dt);
+    const a = alphaOf(this.mc + this.b*Math.abs(this.dx), dt); this.x += (x - this.x)*a; return this.x; }
+  reset(){ this.x = null; this.dx = 0; } }
+class VecEuro { constructor(n, mc, b){ this.f = Array.from({length:n}, () => new OneEuro(mc, b)); } reset(){ this.f.forEach(f => f.reset()); } }
+
 // ============================================================ tracking -> pose
 let vw = 1280, vh = 720, mirror = true;
 let face2D = null, pose = null, jawAngle = 0, jawBase = null;
 let handsData = [];
 const toVP = l => new THREE.Vector3(l.x*vw, -l.y*vh, -l.z*vw);
-const poseState = { s:0, q:new THREE.Quaternion(), t:new THREE.Vector3(), init:false };
+const poseState = { s:0, q:new THREE.Quaternion(), t:new THREE.Vector3(), init:false, w:0 };
+const fT = new VecEuro(4, 1.2, 0.04);   // translation xyz + scale (px)
+let lastT = 0, dtNow = 1/30;
 const _m = new THREE.Matrix4(), _m2 = new THREE.Matrix4();
 
 function updateFace(lms){
   if (!lms) { pose = null; face2D = null; return; }
   const dst = ANAT.idx.map(i => toVP(lms[i]));
   const f = fitSimilarity(CANON, dst);
-  // smoothing
-  const a = 0.55;
-  if (!poseState.init) { poseState.s = f.s; poseState.q.copy(f.q); poseState.t.copy(f.t); poseState.init = true; }
-  else { poseState.s += (f.s - poseState.s)*a; poseState.q.slerp(f.q, a); poseState.t.lerp(f.t, a); }
+  // adaptive smoothing (One Euro) — follows fast moves without lag, steady when still
+  const dt = dtNow;
+  if (!poseState.init) { fT.reset(); poseState.q.copy(f.q); poseState.w = 0; poseState.init = true; }
+  poseState.t.set(fT.f[0].f(f.t.x, dt), fT.f[1].f(f.t.y, dt), fT.f[2].f(f.t.z, dt)); poseState.s = fT.f[3].f(f.s, dt);
+  const ang = poseState.q.angleTo(f.q); poseState.w += (ang/dt - poseState.w) * alphaOf(1, dt);
+  poseState.q.slerp(f.q, alphaOf(1.2 + 2.5*poseState.w, dt));
   pose = poseState;
   headRoot.matrix.compose(pose.t, pose.q, new THREE.Vector3(pose.s, pose.s, pose.s));
   headRoot.matrixWorldNeedsUpdate = true;
   // jaw: chin landmark in canonical space
   const chin = toVP(lms[152]).sub(pose.t).applyQuaternion(pose.q.clone().invert()).multiplyScalar(1/pose.s);
   const C0 = ANAT.chin;
-  const ang = Math.atan2(chin.z - PIVOT.z, chin.y - PIVOT.y) - Math.atan2(C0[2] - PIVOT.z, C0[1] - PIVOT.y);
+  const angJ = Math.atan2(chin.z - PIVOT.z, chin.y - PIVOT.y) - Math.atan2(C0[2] - PIVOT.z, C0[1] - PIVOT.y);
   // ang: rotation about +X; opening the mouth (chin down and back) is positive
-  const open = ang;
+  const open = angJ;
   if (jawBase === null) jawBase = open;
   if (open < jawBase) jawBase = open; else jawBase += (open - jawBase) * 0.003;
   const target = Math.max(0, Math.min(0.75, (open - jawBase) * 2.0));
@@ -240,7 +253,17 @@ function updateHands(list){
       setSeg(sl.bones[`f${fi}_2`], P[b+1], P[b+2], n, right);
       setSeg(sl.bones[`f${fi}_3`], P[b+2], P[b+3], n, right);
     }
-    h.P = P; h.palmPt = palmPt;
+    // forearm (radius + ulna) from wrist to elbow; keeps real length, depth solved from 2D
+    const flen = ANAT.hand.flen * s;
+    let E = null;
+    if (h.elbow) {
+      E = new THREE.Vector3(h.elbow.x*vw, -h.elbow.y*vh, 0);
+      const d2 = Math.hypot(E.x - O.x, E.y - O.y);
+      if (d2 > flen) E.sub(O).multiplyScalar(flen/d2).add(O), E.z = O.z;
+      else E.z = O.z + Math.sign(h.elbowDz || -1) * Math.sqrt(flen*flen - d2*d2);
+    } else E = O.clone().addScaledVector(u, -flen);
+    setSeg(sl.bones.forearm, O, E, n, right);
+    h.P = P; h.palmPt = palmPt; h.E = E;
   });
 }
 
@@ -323,7 +346,7 @@ function drawLabels(){
     const P = h.P, mid = (a,b) => vpToScreen(P[a].clone().lerp(P[b], .5));
     items.push({p: mid(7,8), t:"Falange distal"}, {p: mid(6,7), t:"Falange média"}, {p: mid(5,6), t:"Falange proximal"},
       {p: vpToScreen(h.palmPt([0.55, 0.15, 0])), t:"Metacarpo"}, {p: vpToScreen(h.palmPt([0.12, 0, 0])), t:"Carpo"},
-      {p: vpToScreen(h.palmPt([-0.35, 0.25, 0])), t:"Rádio"}, {p: vpToScreen(h.palmPt([-0.35, -0.3, 0])), t:"Ulna"});
+      {p: vpToScreen(h.P[0].clone().lerp(h.E, .3)), t:"Rádio"}, {p: vpToScreen(h.P[0].clone().lerp(h.E, .6)), t:"Ulna"});
     for (const pp of items.slice(-7)) { minX = Math.min(minX, pp.p[0]); maxX = Math.max(maxX, pp.p[0]); }
   });
   if (!items.length) return;
@@ -350,13 +373,15 @@ function drawLabels(){
 
 // ============================================================ MediaPipe + camera
 const MP = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
-let faceLm = null, handLm = null, running = false, lastVT = -1, frameN = 0, slow = false, faceSeen = 0, handsSeen = 0;
+let faceLm = null, handLm = null, poseLm = null, poseRes = null, running = false, lastVT = -1, frameN = 0, slow = false, faceSeen = 0, handsSeen = 0;
 async function loadTrackers(){
-  const { FilesetResolver, FaceLandmarker, HandLandmarker } = await import(MP + "/vision_bundle.mjs");
+  const { FilesetResolver, FaceLandmarker, HandLandmarker, PoseLandmarker } = await import(MP + "/vision_bundle.mjs");
   const fs = await FilesetResolver.forVisionTasks(MP + "/wasm");
   const mk = async delegate => {
     faceLm = await FaceLandmarker.createFromOptions(fs, { baseOptions:{ modelAssetPath:"https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task", delegate }, runningMode:"VIDEO", numFaces:1 });
     handLm = await HandLandmarker.createFromOptions(fs, { baseOptions:{ modelAssetPath:"https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task", delegate }, runningMode:"VIDEO", numHands:2 });
+    try { poseLm = await PoseLandmarker.createFromOptions(fs, { baseOptions:{ modelAssetPath:"https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task", delegate }, runningMode:"VIDEO", numPoses:1 }); }
+    catch(e) { console.warn("pose indisponível", e); poseLm = null; }
   };
   try { await mk("GPU"); } catch(e) { console.warn("GPU falhou, usando CPU", e); await mk("CPU"); }
 }
@@ -367,7 +392,7 @@ async function startCamera(){
   video.srcObject = stream; await video.play().catch(()=>{});
   await new Promise(r => { if (video.videoWidth) r(); else video.onloadedmetadata = () => r(); });
   vw = video.videoWidth; vh = video.videoHeight;
-  mirror = facing === "user"; video.classList.toggle("mirror", mirror);
+  mirror = facing === "user"; bg.classList.toggle("mirror", mirror);
   poseState.init = false; pose = null; jawBase = null; layout();
 }
 let fpsT = performance.now(), fpsN = 0;
@@ -378,33 +403,48 @@ function loop(){
   if (video.readyState >= 2 && video.currentTime !== lastVT && faceLm) {
     lastVT = video.currentTime; frameN++;
     const t0 = performance.now();
+    dtNow = lastT ? Math.min(0.2, Math.max(0.008, (t0 - lastT)/1000)) : 1/30; lastT = t0;
+    if (bg.width !== vw || bg.height !== vh) { bg.width = vw; bg.height = vh; }
+    bgx.drawImage(video, 0, 0, vw, vh);   // the frame we show is exactly the frame we analyse
     try {
-      const fr = faceLm.detectForVideo(video, t0);
+      const fr = faceLm.detectForVideo(bg, t0);
       if (fr.faceLandmarks && fr.faceLandmarks.length) { updateFace(fr.faceLandmarks[0]); faceSeen = t0; }
       else if (t0 - faceSeen > 300) { updateFace(null); poseState.init = false; }
       if (S.layers.hands && (!slow || frameN % 2 === 0)) {
-        const hr = handLm.detectForVideo(video, t0 + 0.1);
+        const hr = handLm.detectForVideo(bg, t0 + 0.1);
         const nh = (hr.landmarks || []).map((lm, i) => {
           const lab = ((hr.handedness || hr.handednesses || [])[i] || [])[0];
           // MediaPipe assumes a mirrored image; our frame is not mirrored, so its label is swapped
           const right = lab ? lab.categoryName === "Left" : true;
-          return { lm: smoothHand(i, lm), right };
+          return { lm: smoothHand(i, lm, dtNow), right };
         });
+        if (poseLm && nh.length && (frameN % 2 === 0 || !poseRes)) { try { poseRes = poseLm.detectForVideo(bg, t0 + 0.2); } catch(e) { poseRes = null; } }
+        nh.forEach((h, i) => attachElbow(h, i));
         if (nh.length) { handsData = nh; handsSeen = t0; } else if (t0 - handsSeen > 300) handsData = [];
       }
       updateHands(handsData);
     } catch(e) { console.error(e); }
-    slow = performance.now() - t0 > 34;
+    slow = performance.now() - t0 > 45;
     fpsN++; const now = performance.now(); if (now - fpsT > 1000) { $("fps").textContent = fpsN + " fps"; fpsN = 0; fpsT = now; }
     if (!pose && !handsData.length) setStatus("Procurando seu rosto…"); else setStatus("", true);
   }
   render();
 }
-const handPrev = [];
-function smoothHand(i, lm){
-  const p = handPrev[i]; const out = lm.map(l => ({x:l.x, y:l.y, z:l.z}));
-  if (p && p.length === out.length) for (let k=0;k<out.length;k++){ out[k].x = p[k].x + (out[k].x-p[k].x)*.65; out[k].y = p[k].y + (out[k].y-p[k].y)*.65; out[k].z = p[k].z + (out[k].z-p[k].z)*.5; }
-  handPrev[i] = out; return out;
+const handF = [new VecEuro(63, 1.5, 0.05), new VecEuro(63, 1.5, 0.05)];
+const elbowF = [new VecEuro(2, 1.0, 0.03), new VecEuro(2, 1.0, 0.03)];
+function smoothHand(i, lm, dt){
+  const F = handF[i].f; // filter in pixels so the speed term is meaningful
+  return lm.map((l, k) => ({ x: F[k*3].f(l.x*vw, dt)/vw, y: F[k*3+1].f(l.y*vh, dt)/vh, z: F[k*3+2].f(l.z*vw, dt)/vw }));
+}
+function attachElbow(h, k){
+  h.elbow = null;
+  const pl = poseRes && poseRes.landmarks && poseRes.landmarks[0]; if (!pl) return;
+  const w = h.lm[0]; let best = null, bd = 1e9;
+  for (const [wi, ei] of [[15,13],[16,14]]) { const d = Math.hypot((pl[wi].x - w.x)*vw, (pl[wi].y - w.y)*vh); if (d < bd) { bd = d; best = [wi, ei]; } }
+  if (!best || bd > 0.12*Math.max(vw, vh)) return;
+  const e = pl[best[1]], F = elbowF[Math.min(1, k)].f;
+  h.elbow = { x: F[0].f(e.x*vw, dtNow)/vw, y: F[1].f(e.y*vh, dtNow)/vh };
+  h.elbowDz = -(e.z - pl[best[0]].z);   // >0: elbow nearer the camera than the wrist
 }
 
 $("go").onclick = async () => {
@@ -430,8 +470,8 @@ $("btnShot").onclick = async () => {
   const cv = document.createElement("canvas"); cv.width = Math.round(W*DPR); cv.height = Math.round(H*DPR); const g = cv.getContext("2d");
   const s = disp.s*DPR, ox = disp.ox*DPR, oy = disp.oy*DPR;
   g.save(); if (mirror) { g.translate(cv.width, 0); g.scale(-1, 1); }
-  if (S.look === "xray" && "filter" in g) g.filter = video.style.filter;
-  if (video.videoWidth) g.drawImage(video, ox, oy, vw*s, vh*s);
+  if (S.look === "xray" && "filter" in g) g.filter = bg.style.filter;
+  if (bg.width > 1) g.drawImage(bg, ox, oy, vw*s, vh*s);
   g.filter = "none";
   g.restore();
   g.globalAlpha = parseFloat($("tint").style.opacity || 0); g.fillStyle = "#04080f"; g.fillRect(0,0,cv.width,cv.height); g.globalAlpha = 1;
@@ -457,5 +497,5 @@ window.__xr = {
   S, syncUI, ready: modelsReady,
   frame(faceLms, hands, w, h){ vw = w; vh = h; layout(); poseState.init = false; jawBase = 0; jawAngle = 0;
     if (faceLms) { updateFace(faceLms); for (let i=0;i<8;i++) updateFace(faceLms); } else updateFace(null);
-    handsData = (hands||[]).map(x => ({ lm:x.lm, right:x.right })); updateHands(handsData); render(); }
+    handsData = (hands||[]).map(x => ({ lm:x.lm, right:x.right, elbow:x.elbow||null, elbowDz:x.elbowDz||0 })); updateHands(handsData); render(); }
 };
