@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Harpa de Ar</title>
+<style>
+html,body{margin:0;height:100%;background:#02040a;overflow:hidden;color:#e6f4ff;font:15px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;touch-action:none;-webkit-user-select:none;user-select:none}
+#v{position:fixed;top:0;left:0;width:2px;height:2px;opacity:0;pointer-events:none}
+#c{position:fixed;inset:0;width:100%;height:100%;display:block}
+#ui{position:fixed;left:0;right:0;bottom:0;display:flex;flex-wrap:wrap;gap:8px;justify-content:center;padding:10px 10px calc(12px + env(safe-area-inset-bottom));background:linear-gradient(transparent,rgba(0,0,0,.55))}
+button,select{font:inherit;color:#e6f4ff;background:rgba(20,30,48,.72);border:1px solid rgba(140,200,255,.28);border-radius:22px;min-height:44px;padding:0 16px;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
+button:active{background:rgba(60,110,170,.7)}
+button:focus-visible,select:focus-visible{outline:2px solid #7fd4ff;outline-offset:2px}
+#status{position:fixed;top:calc(10px + env(safe-area-inset-top));left:0;right:0;text-align:center;font-size:13px;opacity:.75;pointer-events:none}
+#hint{position:fixed;left:50%;top:42%;transform:translate(-50%,-50%);width:min(88vw,460px);text-align:center;pointer-events:none;opacity:.85;transition:opacity .6s}
+#hint b{color:#9fe3ff;font-weight:600}
+#snd{position:fixed;top:calc(36px + env(safe-area-inset-top));left:50%;transform:translateX(-50%);z-index:4;background:#c2410c;border:0;font-weight:600}
+#snd[hidden]{display:none}
+#start{position:fixed;inset:0;display:grid;place-items:center;background:radial-gradient(ellipse at 50% 40%,#0c1f3a,#02040a 70%);z-index:5;padding:24px}
+#start div{max-width:440px;text-align:center}
+#start h1{font-size:40px;line-height:1.05;margin:0 0 12px;font-weight:300;letter-spacing:.02em}
+#start p{opacity:.8;margin:0 0 22px}
+#go{font-size:18px;padding:0 34px;min-height:54px;background:#1b6fd1;border:0}
+</style>
+</head>
+<body>
+<video id="v" playsinline muted autoplay></video>
+<canvas id="c"></canvas>
+<div id="status"></div>
+<div id="hint">
+  <p><b>Belisque</b> (polegar + indicador) e arraste para esticar uma corda de luz.<br>
+  Com <b>as duas mãos</b> belisque ao mesmo tempo para esticar entre elas.</p>
+  <p>Passe o <b>dedo indicador</b> através da corda para tocar. Corda longa = grave, curta = agudo.</p>
+</div>
+<button id="snd" hidden>Som desligado: toque aqui para ativar</button>
+<div id="ui">
+  <button id="undo">Desfazer</button>
+  <button id="clear">Limpar</button>
+  <select id="scale" aria-label="Escala">
+    <option value="penta">Pentatônica</option>
+    <option value="menor">Pentatônica menor</option>
+    <option value="maior">Maior</option>
+    <option value="crom">Cromática</option>
+    <option value="livre">Livre (sem afinar)</option>
+  </select>
+  <button id="mode">Toque: tocar</button>
+  <button id="vid">Vídeo: escuro</button>
+  <button id="flip">Trocar câmera</button>
+</div>
+<div id="start"><div>
+  <h1>Harpa de Ar</h1>
+  <p>Desenhe cordas de luz no ar com as mãos e toque-as. Use em lugar iluminado, com as mãos inteiras visíveis na câmera. Sem câmera, dá para criar e tocar com o dedo na tela.</p>
+  <button id="go">Começar</button>
+</div></div>
+
+<script type="module">
+const WASM='https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm';
+const MODEL='https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
+const $=id=>document.getElementById(id);
+const cv=$('c'),ctx=cv.getContext('2d'),video=$('v'),statusEl=$('status'),hint=$('hint');
+let W=0,H=0,DPR=1;
+function resize(){DPR=Math.min(devicePixelRatio||1,2);W=innerWidth;H=innerHeight;cv.width=W*DPR;cv.height=H*DPR;ctx.setTransform(DPR,0,0,DPR,0,0)}
+addEventListener('resize',resize);resize();
+const setStatus=t=>statusEl.textContent=t;
+
+/* ---------- música ---------- */
+const NOTES=['Dó','Dó#','Ré','Ré#','Mi','Fá','Fá#','Sol','Sol#','Lá','Lá#','Si'];
+const SCALES={penta:[0,2,4,7,9],menor:[0,3,5,7,10],maior:[0,2,4,5,7,9,11],crom:[0,1,2,3,4,5,6,7,8,9,10,11],livre:null};
+let scale='penta';
+function lenToMidi(L){
+  const r=Math.max(L/Math.hypot(W,H),0.02);
+  let m=57-12*Math.log2(r/0.3);            // 30% da diagonal = Lá3
+  m=Math.max(33,Math.min(93,m));
+  const sc=SCALES[scale]; if(!sc) return m;
+  let best=m,bd=1e9;
+  for(let o=Math.floor(m/12)-1;o<=Math.floor(m/12)+1;o++)for(const s of sc){const c=o*12+s,d=Math.abs(c-m);if(d<bd){bd=d;best=c}}
+  return best;
+}
+const mtof=m=>440*2**((m-69)/12);
+const noteName=m=>{const r=Math.round(m);return NOTES[(r%12+12)%12]+(Math.floor(r/12)-1)+(Math.abs(m-r)>0.05?'≈':'')};
+const hueOf=m=>(190+((m%12)+12)%12*30)%360;
+
+/* ---------- áudio: corda dedilhada (Karplus-Strong) ---------- */
+let ac=null,master=null;
+let unlockEl=null;
+function silentWav(){ // 0,5 s de silêncio: faz o iOS tocar como mídia mesmo com a chave de silencioso
+  const sr=8000,n=4000,b=new Uint8Array(44+n),v=new DataView(b.buffer),w=(o,s)=>[...s].forEach((c,i)=>b[o+i]=c.charCodeAt(0));
+  w(0,'RIFF');v.setUint32(4,36+n,true);w(8,'WAVEfmt ');v.setUint32(16,16,true);v.setUint16(20,1,true);v.setUint16(22,1,true);
+  v.setUint32(24,sr,true);v.setUint32(28,sr,true);v.setUint16(32,1,true);v.setUint16(34,8,true);w(36,'data');v.setUint32(40,n,true);
+  b.fill(128,44);let s='';b.forEach(x=>s+=String.fromCharCode(x));return 'data:audio/wav;base64,'+btoa(s);
+}
+function unlockAudio(){
+  try{if(navigator.audioSession)navigator.audioSession.type='playback'}catch(e){}
+  if(!unlockEl){unlockEl=new Audio(silentWav());unlockEl.loop=true;unlockEl.setAttribute('playsinline','')}
+  unlockEl.play().catch(()=>{});
+  if(ac&&ac.state!=='running') ac.resume().catch(()=>{});
+}
+function audioOK(){return ac&&ac.state==='running'}
+function initAudio(){
+  if(ac) return;
+  unlockAudio();
+  ac=new (window.AudioContext||window.webkitAudioContext)();
+  ac.onstatechange=()=>{if(ac.state!=='running'){ac.resume().catch(()=>{})}};
+  // destrava tocando um buffer mudo dentro do gesto do usuário
+  const sb=ac.createBuffer(1,1,22050),ss=ac.createBufferSource();ss.buffer=sb;ss.connect(ac.destination);ss.start(0);
+  const comp=ac.createDynamicsCompressor();
+  master=ac.createGain();master.gain.value=0.8;
+  const conv=ac.createConvolver(),wet=ac.createGain();wet.gain.value=0.38;
+  const sr=ac.sampleRate,n=sr*2.8|0,ir=ac.createBuffer(2,n,sr);
+  for(let c=0;c<2;c++){const d=ir.getChannelData(c);for(let i=0;i<n;i++)d[i]=(Math.random()*2-1)*Math.pow(1-i/n,3)}
+  conv.buffer=ir;
+  master.connect(comp);master.connect(conv);conv.connect(wet);wet.connect(comp);comp.connect(ac.destination);
+}
+const bufCache=new Map();
+function pluckBuffer(f){
+  const key=Math.round(f*2);
+  if(bufCache.has(key)) return bufCache.get(key);
+  const sr=ac.sampleRate,T=f<150?4:3,n=Math.floor(sr*T),b=ac.createBuffer(1,n,sr),y=b.getChannelData(0);
+  const P=sr/f-0.5, g=Math.pow(0.001,1/(f*T));
+  const init=Math.min(n,Math.ceil(P)+2);let lp=0;
+  for(let i=0;i<init;i++){lp=lp*0.45+(Math.random()*2-1)*0.55;y[i]=lp}
+  let zp=0;
+  for(let i=init;i<n;i++){const t=i-P,k=Math.floor(t),fr=t-k,z=y[k]*(1-fr)+y[k+1]*fr;y[i]=g*(0.5*z+0.5*zp);zp=z}
+  const fade=Math.floor(sr*0.05);for(let i=0;i<fade;i++)y[n-1-i]*=i/fade;
+  if(bufCache.size>90) bufCache.delete(bufCache.keys().next().value);
+  bufCache.set(key,b);return b;
+}
+function play(f,vel,pan){
+  if(!ac) return;
+  if(ac.state!=='running') ac.resume().catch(()=>{});
+  const src=ac.createBufferSource();src.buffer=pluckBuffer(f);
+  const g=ac.createGain();g.gain.value=vel;src.connect(g);
+  let out=g;
+  if(ac.createStereoPanner){const p=ac.createStereoPanner();p.pan.value=Math.max(-1,Math.min(1,pan))*0.7;g.connect(p);out=p}
+  out.connect(master);src.start();
+}
+
+/* ---------- cordas e faíscas ---------- */
+const strings=[],sparks=[];
+function retune(s){s.midi=lenToMidi(s.L);s.f=mtof(s.midi);s.hue=hueOf(s.midi)}
+function addString(a,b){
+  const L=Math.hypot(b.x-a.x,b.y-a.y); if(L<40) return;
+  const s={a:{x:a.x,y:a.y},b:{x:b.x,y:b.y},L,t0:-1e9,amp:0,pos:.5,born:performance.now(),last:0,label:0};
+  retune(s);strings.push(s);if(strings.length>32)strings.shift();
+  pluck(s,.5,.45);hint.style.opacity=0;
+}
+function pluck(s,pos,vel){
+  const now=performance.now(); if(now-s.last<90) return;
+  s.last=now;s.t0=now;s.amp=5+15*vel;s.pos=pos;s.label=now;
+  play(s.f,0.2+0.65*vel,((s.a.x+s.b.x)/W)-1);
+  const n=8+vel*16|0;
+  for(let i=0;i<n;i++)sparks.push({s,u:pos,v:(Math.random()<.5?-1:1)*(0.4+Math.random()*1.1),life:1,size:1+Math.random()*2.2});
+  if(sparks.length>600)sparks.splice(0,sparks.length-600);
+}
+function disp(s,u,now){
+  const t=(now-s.t0)/1000; if(t>4) return 0;
+  const w=2*Math.PI*Math.min(5+s.f/45,24);
+  return s.amp*Math.exp(-t*2.2)*(Math.sin(Math.PI*u)*Math.sin(w*t)+0.3*Math.sin(2*Math.PI*u)*Math.sin(2*w*t+1));
+}
+function pointOn(s,u,now){
+  const dx=s.b.x-s.a.x,dy=s.b.y-s.a.y,d=disp(s,u,now);
+  return {x:s.a.x+dx*u-dy/s.L*d,y:s.a.y+dy*u+dx/s.L*d};
+}
+function segHit(p,q,a,b){
+  const rx=q.x-p.x,ry=q.y-p.y,sx=b.x-a.x,sy=b.y-a.y,den=rx*sy-ry*sx;
+  if(Math.abs(den)<1e-6) return -1;
+  const ax=a.x-p.x,ay=a.y-p.y,t=(ax*sy-ay*sx)/den,u=(ax*ry-ay*rx)/den;
+  return (t>=0&&t<=1&&u>=0.03&&u<=0.97)?u:-1;
+}
+function strum(p,q){
+  const d=Math.hypot(q.x-p.x,q.y-p.y); if(d<1.5) return;
+  const vel=Math.max(0.15,Math.min(1,d/55));
+  for(const s of strings){const u=segHit(p,q,s.a,s.b);if(u>=0)pluck(s,u,vel)}
+}
+
+/* ---------- câmera + rastreamento de mãos ---------- */
+let landmarker=null,stream=null,facing='user',mirror=true,lastVT=-1;
+let ox=0,oy=0,dw=0,dh=0;
+function layout(){
+  const vw=video.videoWidth,vh=video.videoHeight; if(!vw) return false;
+  const sc=Math.max(W/vw,H/vh);dw=vw*sc;dh=vh*sc;ox=(W-dw)/2;oy=(H-dh)/2;return true;
+}
+const toScreen=p=>{const x=ox+p.x*dw;return {x:mirror?W-x:x,y:oy+p.y*dh}};
+const lerp=(a,b,k)=>({x:a.x+(b.x-a.x)*k,y:a.y+(b.y-a.y)*k});
+const hands=new Map();let two=null;
+
+async function startCam(){
+  if(stream) stream.getTracks().forEach(t=>t.stop());
+  stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:facing,width:{ideal:1280},height:{ideal:720}},audio:false});
+  video.srcObject=stream;await video.play();mirror=facing==='user';hands.clear();two=null;
+}
+async function loadModel(){
+  const {FilesetResolver,HandLandmarker}=await import('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs');
+  const fs=await FilesetResolver.forVisionTasks(WASM);
+  const opts=d=>({baseOptions:{modelAssetPath:MODEL,delegate:d},runningMode:'VIDEO',numHands:2,minHandDetectionConfidence:.5,minHandPresenceConfidence:.5,minTrackingConfidence:.5});
+  try{landmarker=await HandLandmarker.createFromOptions(fs,opts('GPU'))}
+  catch(e){landmarker=await HandLandmarker.createFromOptions(fs,opts('CPU'))}
+}
+
+function onResults(res,now){
+  const seen=new Set();
+  res.landmarks.forEach((lm,i)=>{
+    let key=res.handedness?.[i]?.[0]?.categoryName||'H'; if(seen.has(key)) key+=i; seen.add(key);
+    let h=hands.get(key);
+    if(!h){h={pinch:false,start:null,pin:null,tips:{},prev:{},pts:null,seen:0,released:false};hands.set(key,h)}
+    h.seen=now;
+    const P=lm.map(toScreen);h.pts=P;
+    const size=Math.hypot(P[0].x-P[9].x,P[0].y-P[9].y)||1;
+    const d=Math.hypot(P[4].x-P[8].x,P[4].y-P[8].y)/size;
+    const pin={x:(P[4].x+P[8].x)/2,y:(P[4].y+P[8].y)/2};
+    h.pin=h.pin?lerp(h.pin,pin,.6):pin;
+    const was=h.pinch;
+    if(!was&&d<0.32) h.pinch=true; else if(was&&d>0.5) h.pinch=false;
+    if(!was&&h.pinch) h.start={...h.pin};
+    if(was&&!h.pinch) h.released=true;
+    for(const k of [8,12]){h.prev[k]=h.tips[k];h.tips[k]=h.tips[k]?lerp(h.tips[k],P[k],.75):P[k]}
+  });
+}
+
+function handLogic(now){
+  for(const [k,h] of hands) if(now-h.seen>350){hands.delete(k);if(two&&(two.a===h||two.b===h))two=null}
+  const list=[...hands.values()],pinching=list.filter(h=>h.pinch);
+  if(pinching.length>=2) two={a:pinching[0],b:pinching[1]};
+  for(const h of list){
+    if(h.released){
+      if(two&&(two.a===h||two.b===h)){addString(two.a.pin,two.b.pin);two.a.start=null;two.b.start=null;two=null}
+      else if(h.start) addString(h.start,h.pin);
+      h.start=null;h.released=false;
+    }
+    if(!h.pinch) for(const k of [8,12]) if(h.prev[k]) strum(h.prev[k],h.tips[k]);
+    for(const k of [8,12]) h.prev[k]=h.tips[k];
+  }
+}
+function preview(){
+  if(two&&two.a.pinch&&two.b.pinch) return [two.a.pin,two.b.pin];
+  for(const h of hands.values()) if(h.pinch&&h.start) return [h.start,h.pin];
+  if(ptr&&mode==='criar') return [ptr.start,ptr.cur];
+  return null;
+}
+
+/* ---------- toque / mouse ---------- */
+let mode='tocar',ptr=null;
+cv.addEventListener('pointerdown',e=>{cv.setPointerCapture(e.pointerId);const p={x:e.clientX,y:e.clientY};ptr={id:e.pointerId,start:p,cur:p,last:p}});
+cv.addEventListener('pointermove',e=>{if(!ptr||e.pointerId!==ptr.id)return;const p={x:e.clientX,y:e.clientY};if(mode==='tocar')strum(ptr.last,p);ptr.last=p;ptr.cur=p});
+const endPtr=e=>{if(!ptr||e.pointerId!==ptr.id)return;if(mode==='criar')addString(ptr.start,ptr.cur);ptr=null};
+cv.addEventListener('pointerup',endPtr);cv.addEventListener('pointercancel',()=>ptr=null);
+
+/* ---------- desenho ---------- */
+let vidAlpha=0.45;
+function drawString(s,now){
+  const dx=s.b.x-s.a.x,dy=s.b.y-s.a.y,N=Math.max(12,Math.min(64,s.L/7|0));
+  const act=Math.exp(-(now-s.t0)/700),born=Math.min(1,(now-s.born)/300);
+  ctx.beginPath();
+  for(let i=0;i<=N;i++){const p=pointOn(s,i/N,now);i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y)}
+  for(const [w,a,l] of [[16,.05+.12*act,55],[6,.16+.3*act,62],[2,.85,88]]){
+    ctx.lineWidth=w;ctx.strokeStyle=`hsla(${s.hue},100%,${l}%,${a*born})`;ctx.stroke();
+  }
+  for(const e of [s.a,s.b]){ctx.beginPath();ctx.arc(e.x,e.y,3.5,0,7);ctx.fillStyle=`hsla(${s.hue},100%,80%,${.9*born})`;ctx.fill()}
+}
+function drawLabel(s,now){
+  const t=now-s.label; if(t>1400) return;
+  const mx=(s.a.x+s.b.x)/2,my=(s.a.y+s.b.y)/2;
+  ctx.globalAlpha=Math.min(1,(1400-t)/500);ctx.fillStyle='#fff';ctx.font='600 14px system-ui,sans-serif';ctx.textAlign='center';
+  ctx.fillText(noteName(s.midi),mx-(s.b.y-s.a.y)/s.L*22,my+(s.b.x-s.a.x)/s.L*22);ctx.globalAlpha=1;
+}
+let lastT=performance.now();
+function frame(){
+  const now=performance.now(),dt=Math.min(.05,(now-lastT)/1000);lastT=now;
+  const hasVid=layout();
+  if(landmarker&&hasVid&&video.readyState>=2&&video.currentTime!==lastVT){
+    lastVT=video.currentTime;
+    try{onResults(landmarker.detectForVideo(video,now),now)}catch(e){}
+  }
+  handLogic(now);
+
+  ctx.globalCompositeOperation='source-over';
+  ctx.fillStyle='#02040a';ctx.fillRect(0,0,W,H);
+  if(hasVid&&vidAlpha>0){
+    ctx.save();if(mirror){ctx.translate(W,0);ctx.scale(-1,1)}
+    ctx.globalAlpha=vidAlpha;ctx.drawImage(video,ox,oy,dw,dh);ctx.restore();
+  }
+  ctx.globalCompositeOperation='lighter';
+  for(const s of strings) drawString(s,now);
+  for(let i=sparks.length-1;i>=0;i--){
+    const p=sparks[i];p.u+=p.v*dt*(420/p.s.L);p.life-=dt*0.9;
+    if(p.life<=0||p.u<0||p.u>1||!strings.includes(p.s)){sparks.splice(i,1);continue}
+    const q=pointOn(p.s,p.u,now);
+    ctx.beginPath();ctx.arc(q.x,q.y,p.size*(1+2*p.life),0,7);
+    ctx.fillStyle=`hsla(${p.s.hue},100%,75%,${.5*p.life})`;ctx.fill();
+    ctx.beginPath();ctx.arc(q.x,q.y,p.size*.7,0,7);ctx.fillStyle=`rgba(255,255,255,${p.life})`;ctx.fill();
+  }
+  const pv=preview();
+  if(pv){
+    const [a,b]=pv,L=Math.hypot(b.x-a.x,b.y-a.y);
+    if(L>10){
+      const m=lenToMidi(L),hue=hueOf(m);
+      ctx.setLineDash([6,8]);ctx.lineWidth=2;ctx.strokeStyle=`hsla(${hue},100%,75%,.75)`;
+      ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();ctx.setLineDash([]);
+      ctx.globalCompositeOperation='source-over';
+      ctx.fillStyle='#fff';ctx.font='600 15px system-ui,sans-serif';ctx.textAlign='center';
+      ctx.fillText(L<40?'…':noteName(m),(a.x+b.x)/2,(a.y+b.y)/2-14);
+      ctx.globalCompositeOperation='lighter';
+    }
+  }
+  for(const h of hands.values()){
+    if(!h.pts) continue;
+    for(const k of [4,8,12]){const p=k===4?h.pts[4]:h.tips[k];ctx.beginPath();ctx.arc(p.x,p.y,k===8?5:3.5,0,7);ctx.fillStyle='rgba(170,230,255,.7)';ctx.fill()}
+    if(h.pinch){ctx.beginPath();ctx.arc(h.pin.x,h.pin.y,12,0,7);ctx.lineWidth=2;ctx.strokeStyle='rgba(255,255,255,.85)';ctx.stroke()}
+  }
+  ctx.globalCompositeOperation='source-over';
+  for(const s of strings) drawLabel(s,now);
+  $('snd').hidden=audioOK();
+  requestAnimationFrame(frame);
+}
+
+/* ---------- controles ---------- */
+$('undo').onclick=()=>strings.pop();
+$('clear').onclick=()=>{strings.length=0;sparks.length=0};
+$('scale').onchange=e=>{scale=e.target.value;strings.forEach(retune);strings.forEach(s=>s.label=performance.now())};
+$('mode').onclick=e=>{mode=mode==='tocar'?'criar':'tocar';e.target.textContent='Toque: '+mode};
+const VIDS=[['escuro',.45],['claro',.85],['oculto',0]];let vi=0;
+$('vid').onclick=e=>{vi=(vi+1)%3;vidAlpha=VIDS[vi][1];e.target.textContent='Vídeo: '+VIDS[vi][0]};
+$('flip').onclick=async()=>{facing=facing==='user'?'environment':'user';try{await startCam()}catch(e){setStatus('Não consegui trocar de câmera')}};
+for(const ev of ['pointerdown','touchend','click']) document.addEventListener(ev,()=>{if(ac&&!audioOK())unlockAudio()},true);
+$('snd').onclick=()=>{unlockAudio();setTimeout(()=>play(mtof(64),.6,0),60)};
+function chime(){[57,64,69].forEach((m,i)=>setTimeout(()=>play(mtof(m),.45,i-1),i*110))}
+$('go').onclick=async()=>{
+  initAudio();try{await ac.resume()}catch(e){}
+  chime();
+  $('start').remove();requestAnimationFrame(frame);
+  setStatus('Abrindo câmera…');
+  try{await startCam()}catch(e){
+    setStatus('Sem câmera: crie e toque cordas com o dedo (botão “Toque”).');mode='criar';$('mode').textContent='Toque: criar';return;
+  }
+  unlockAudio(); // a câmera costuma interromper o áudio no iPhone
+  setStatus('Carregando rastreamento de mãos…');
+  try{await loadModel();setStatus('');}catch(e){setStatus('Falha ao carregar o rastreamento de mãos. Verifique a internet.')}
+  unlockAudio();
+};
+</script>
+</body>
+</html>
