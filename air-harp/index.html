@@ -395,67 +395,75 @@ async function loadModel(){
 }
 
 const TIPS=[4,8,12,16,20];const playTips=()=>[8];
-const HOLD=220; // ms segurando a pinça antes de começar a corda
+const ARM=550,STILL=26; // pinça parada por ~0,55 s (sem mexer mais que 26 px) = começa a criar corda
 function onResults(res,now){
   const seen=new Set();
   res.landmarks.forEach((lm,i)=>{
     let key=res.handedness?.[i]?.[0]?.categoryName||'H'; if(seen.has(key)) key+=i; seen.add(key);
     let h=hands.get(key);
-    if(!h){h={pinch:false,pinchT:0,relT:0,open:0,d:1,start:null,pin:null,tips:{},prev:{},pts:null,seen:0,released:false};hands.set(key,h)}
+    if(!h){h={pinch:false,creating:false,armT:0,armPos:null,relT:0,open:0,d:1,start:null,pin:null,prevPin:null,tips:{},prev:{},pts:null,seen:0,released:false};hands.set(key,h)}
     h.seen=now;
     const P=lm.map(toScreen);h.pts=P;
-    // tamanho da mão estável em qualquer ângulo: maior entre palma (punho→médio) e largura (indicador→mindinho)
     const size=Math.max(Math.hypot(P[0].x-P[9].x,P[0].y-P[9].y),Math.hypot(P[5].x-P[17].x,P[5].y-P[17].y)*1.25)||1;
     const d=Math.hypot(P[4].x-P[8].x,P[4].y-P[8].y)/size;h.d=h.d*0.5+d*0.5;
     const pin={x:(P[4].x+P[8].x)/2,y:(P[4].y+P[8].y)/2};
-    h.pin=h.pin?lerp(h.pin,pin,.55):pin;
+    h.prevPin=h.pin;h.pin=h.pin?lerp(h.pin,pin,.7):pin;
     if(!h.pinch){
-      if(h.d<0.3){h.pinch=true;h.open=0;h.start={...h.pin};h.pinchT=now}
+      if(h.d<0.32){h.pinch=true;h.open=0;h.creating=false;h.armT=now;h.armPos={...h.pin}}
     }else{
-      // só solta depois de 3 leituras seguidas abertas (evita a corda “cair” no meio)
-      if(h.d>0.48){if(++h.open>=3){h.pinch=false;h.released=true;h.relT=now}}else h.open=0;
+      if(h.d>0.5){if(++h.open>=3){h.pinch=false;h.released=true;h.relT=now}}else h.open=0;
     }
     for(const k of TIPS){h.prev[k]=h.tips[k];h.tips[k]=h.tips[k]?lerp(h.tips[k],P[k],.8):P[k]}
   });
 }
-const held=(h,now)=>h.pinch&&h.start&&now-h.pinchT>=HOLD;
+const held=h=>h.pinch&&h.creating;
 function handLogic(now){
   for(const [k,h] of hands) if(now-h.seen>400){hands.delete(k);if(two&&(two.a===h||two.b===h))two=null}
   const list=[...hands.values()],canCreate=mode!=='tocar',canPlay=mode!=='criar';
-  if(canCreate){
-    const pinching=list.filter(h=>held(h,now));
-    if(pinching.length>=2) two={a:pinching[0],b:pinching[1]};
-  }else two=null;
+  for(const h of list){
+    // armar a criação: pinça parada
+    if(h.pinch&&!h.creating&&canCreate){
+      if(Math.hypot(h.pin.x-h.armPos.x,h.pin.y-h.armPos.y)>STILL){h.armPos={...h.pin};h.armT=now}
+      else if(now-h.armT>=(canPlay?ARM:200)){h.creating=true;h.start={...h.pin}}
+    }
+  }
+  const creating=list.filter(held);
+  two=canCreate&&creating.length>=2?{a:creating[0],b:creating[1]}:null;
   for(const h of list){
     if(h.released){
-      if(canCreate){
-        if(two&&(two.a===h||two.b===h)){addString(two.a.pin,two.b.pin);two.a.start=null;two.b.start=null;two=null}
-        else if(h.start&&h.relT-h.pinchT>=HOLD&&Math.hypot(h.pin.x-h.start.x,h.pin.y-h.start.y)>=60) addString(h.start,h.pin);
+      if(canCreate&&h.creating){
+        if(two&&(two.a===h||two.b===h)){addString(two.a.pin,two.b.pin);two.a.creating=two.b.creating=false;two=null}
+        else if(Math.hypot(h.pin.x-h.start.x,h.pin.y-h.start.y)>=60) addString(h.start,h.pin);
       }
-      h.start=null;h.released=false;
+      h.creating=false;h.start=null;h.released=false;
     }
-    // não toca com a mão que está fazendo (ou quase fazendo) a pinça
-    if(canPlay&&!h.pinch&&h.d>0.42&&now-h.relT>250)
-      for(const k of playTips()) if(h.prev[k]&&h.tips[k]) strum(h.prev[k],h.tips[k]);
+    if(!canPlay) continue;
+    if(h.pinch){ // polegar + indicador juntos = palheta
+      if(!h.creating&&h.prevPin) strum(h.prevPin,h.pin);
+    }else if(now-h.relT>150){ // dedos abertos: polegar e indicador tocam cada um
+      for(const k of [4,8]) if(h.prev[k]&&h.tips[k]) strum(h.prev[k],h.tips[k]);
+    }
   }
-  for(const h of list) for(const k of TIPS) h.prev[k]=h.tips[k];
+  for(const h of list){h.prevPin=h.pin;for(const k of TIPS) h.prev[k]=h.tips[k]}
 }
 function preview(){
   if(mode==='tocar') return null;
-  const now=performance.now();
-  if(two&&held(two.a,now)&&held(two.b,now)) return [two.a.pin,two.b.pin];
-  for(const h of hands.values()) if(held(h,now)) return [h.start,h.pin];
+  if(two&&held(two.a)&&held(two.b)) return [two.a.pin,two.b.pin];
+  for(const h of hands.values()) if(held(h)) return [h.start,h.pin];
   if(ptr&&ptr.create) return [ptr.start,ptr.cur];
   return null;
 }
 function drawPinchUI(h,now){
-  if(mode==='tocar'||!h.pts) return;
-  const th=h.pts[4],ix=h.pts[8],p=Math.max(0,Math.min(1,(0.8-h.d)/(0.8-0.3)));
-  if(h.pinch){
-    const q=Math.min(1,(now-h.pinchT)/HOLD);
-    ctx.beginPath();ctx.arc(h.pin.x,h.pin.y,16,-Math.PI/2,-Math.PI/2+q*Math.PI*2);ctx.lineWidth=4;
-    ctx.strokeStyle=q<1?'rgba(255,215,120,.9)':'rgba(255,255,255,.95)';ctx.stroke();
-    if(q>=1&&h.start){ctx.beginPath();ctx.arc(h.start.x,h.start.y,7,0,7);ctx.fillStyle='rgba(255,230,160,.95)';ctx.fill()}
+  if(!h.pts||!h.pinch) return;
+  // palheta
+  ctx.beginPath();ctx.arc(h.pin.x,h.pin.y,9,0,7);ctx.fillStyle=h.creating?'rgba(255,240,190,.95)':'rgba(120,255,170,.9)';ctx.fill();
+  if(mode==='tocar') return;
+  if(!h.creating){ // anel enchendo enquanto segura parado
+    const q=Math.min(1,(now-h.armT)/(mode==='criar'?200:ARM));
+    if(q>0.25){ctx.beginPath();ctx.arc(h.pin.x,h.pin.y,18,-Math.PI/2,-Math.PI/2+q*Math.PI*2);ctx.lineWidth=4;ctx.strokeStyle='rgba(255,215,120,.9)';ctx.stroke()}
+  }else{
+    ctx.beginPath();ctx.arc(h.pin.x,h.pin.y,18,0,7);ctx.lineWidth=3;ctx.strokeStyle='rgba(255,255,255,.95)';ctx.stroke();
+    ctx.beginPath();ctx.arc(h.start.x,h.start.y,7,0,7);ctx.fillStyle='rgba(255,230,160,.95)';ctx.fill();
   }
 }
 
@@ -530,7 +538,7 @@ function frame(){
   for(const h of hands.values()){
     if(!h.pts) continue;
     const tipCol=mode!=='criar'?'rgba(120,255,170,.85)':'rgba(170,230,255,.6)';
-    for(const k of [4,8]){const p=h.tips[k]||h.pts[k];ctx.beginPath();ctx.arc(p.x,p.y,k===8?8:5,0,7);ctx.fillStyle=tipCol;ctx.fill()}
+    if(!h.pinch)for(const k of [4,8]){const p=h.tips[k]||h.pts[k];ctx.beginPath();ctx.arc(p.x,p.y,k===8?8:5,0,7);ctx.fillStyle=tipCol;ctx.fill()}
     drawPinchUI(h,now);
   }
   ctx.globalCompositeOperation='source-over';
@@ -553,7 +561,7 @@ function setPanel(open){const p=$('panel');p.hidden=!open;$('cfg').textContent=o
 $('cfg').onclick=()=>setPanel($('panel').hidden);
 $('closeCfg').onclick=()=>setPanel(false);
 cv.addEventListener('pointerdown',()=>{if(!$('panel').hidden)setPanel(false)},true);
-const MODES={ambos:['Modo: CRIAR + TOCAR','Polegar + indicador juntos: cria corda · Indicador: toca'],tocar:['Modo: só TOCAR','Só toca; pinça não cria cordas'],criar:['Modo: só CRIAR','Só cria cordas; dedos não tocam']};
+const MODES={ambos:['Modo: CRIAR + TOCAR','Polegar + indicador juntos: passe pela corda para tocar, segure parado para criar'],tocar:['Modo: só TOCAR','Só toca; pinça não cria cordas'],criar:['Modo: só CRIAR','Só cria cordas; dedos não tocam']};
 function setMode(m){mode=m;two=null;ptr=null;for(const h of hands.values()){h.start=null;h.released=false}const b=$('mode');b.textContent=MODES[m][0];b.className=m;setStatus(MODES[m][1]);clearTimeout(setMode.t);setMode.t=setTimeout(()=>setStatus(''),2500)}
 $('mode').onclick=()=>setMode(mode==='ambos'?'tocar':mode==='tocar'?'criar':'ambos');
 $('inst').onchange=e=>{inst=e.target.value;preloadAll()};
