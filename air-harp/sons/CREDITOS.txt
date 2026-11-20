@@ -1,3 +1,14 @@
-Amostras de instrumentos: FluidR3_GM SoundFont (Frank Wen), convertidas por
-Benjamin Gleitzman (github.com/gleitz/midi-js-soundfonts).
-Licença: Creative Commons Attribution 3.0 — https://creativecommons.org/licenses/by/3.0/
+Créditos dos sons (todos gravados de instrumentos reais, exceto quando indicado)
+
+Bateria com baquetas (kit-baqueta) e salas de reverb (ir-room.wav, ir-soft.wav):
+  SM Drums / Deeply Sampled Free Drums - Scott McLean, Tod Stillwell, Suleiman Ali. Domínio público.
+  https://github.com/sfzinstruments/SMDrums
+Bateria com vassourinha (kit-vassoura, exceto bumbo):
+  Swirly Drums - Karoryfer Samples. CC0 1.0. https://github.com/sfzinstruments/karoryfer.swirly-drums
+Rhodes (rhodes): jRhodes3d - Jeff Learman (Rhodes Mark I Stage 73, 1977).
+  Amostras sob CC BY-NC 4.0 (uso não comercial, com crédito). https://github.com/sfzinstruments/jlearman.jRhodes3d
+Piano, baixo elétrico, órgão, guitarra e violão nylon (piano, bass, organ, guitar, nylon):
+  tonejs-instruments - Nicholaus Brosowsky (de fontes de domínio público). CC BY 3.0.
+  https://github.com/nbrosowsky/tonejs-instruments
+Cordas e pad (string_ensemble_1-mp3, pad_2_warm-mp3):
+  FluidR3_GM - Frank Wen, via gleitz/midi-js-soundfonts. CC BY 3.0.
