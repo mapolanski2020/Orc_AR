@@ -374,11 +374,12 @@ let landmarker=null,stream=null,facing='user',mirror=true,lastVT=-1;
 let ox=0,oy=0,dw=0,dh=0;
 function layout(){
   const vw=video.videoWidth,vh=video.videoHeight; if(!vw) return false;
-  const sc=Math.max(W/vw,H/vh);dw=vw*sc;dh=vh*sc;ox=(W-dw)/2;oy=(H-dh)/2;return true;
+  const sc=Math.max(W/vw,H/vh)*ZOOM;dw=vw*sc;dh=vh*sc;ox=(W-dw)/2;oy=(H-dh)/2;return true;
 }
 const toScreen=p=>{const x=ox+p.x*dw;return {x:mirror?W-x:x,y:oy+p.y*dh}};
 const lerp=(a,b,k)=>({x:a.x+(b.x-a.x)*k,y:a.y+(b.y-a.y)*k});
 const hands=new Map();let two=null;
+const ZOOM=1.35; // margem: a mão chega na borda da tela ainda inteira dentro da câmera
 
 async function startCam(){
   if(stream) stream.getTracks().forEach(t=>t.stop());
@@ -388,7 +389,7 @@ async function startCam(){
 async function loadModel(){
   const {FilesetResolver,HandLandmarker}=await import('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs');
   const fs=await FilesetResolver.forVisionTasks(WASM);
-  const opts=d=>({baseOptions:{modelAssetPath:MODEL,delegate:d},runningMode:'VIDEO',numHands:2,minHandDetectionConfidence:.5,minHandPresenceConfidence:.5,minTrackingConfidence:.5});
+  const opts=d=>({baseOptions:{modelAssetPath:MODEL,delegate:d},runningMode:'VIDEO',numHands:2,minHandDetectionConfidence:.45,minHandPresenceConfidence:.4,minTrackingConfidence:.4});
   try{landmarker=await HandLandmarker.createFromOptions(fs,opts('GPU'))}
   catch(e){landmarker=await HandLandmarker.createFromOptions(fs,opts('CPU'))}
 }
