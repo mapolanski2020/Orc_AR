@@ -15,6 +15,7 @@ button:focus-visible,select:focus-visible{outline:2px solid #7fd4ff;outline-offs
 #status{position:fixed;top:calc(10px + env(safe-area-inset-top));left:0;right:0;text-align:center;font-size:13px;opacity:.75;pointer-events:none}
 #hint{position:fixed;left:50%;top:42%;transform:translate(-50%,-50%);width:min(88vw,460px);text-align:center;pointer-events:none;opacity:.85;transition:opacity .6s}
 #hint b{color:#9fe3ff;font-weight:600}
+#mode{font-weight:700;min-width:190px}#mode.criar{background:#1b5fb8;border-color:#5fa8ff}#mode.tocar{background:#138a4a;border-color:#5fe39a}
 #snd{position:fixed;top:calc(36px + env(safe-area-inset-top));left:50%;transform:translateX(-50%);z-index:4;background:#c2410c;border:0;font-weight:600}
 #snd[hidden]{display:none}
 #start{position:fixed;inset:0;display:grid;place-items:center;background:radial-gradient(ellipse at 50% 40%,#0c1f3a,#02040a 70%);z-index:5;padding:24px}
@@ -29,9 +30,8 @@ button:focus-visible,select:focus-visible{outline:2px solid #7fd4ff;outline-offs
 <canvas id="c"></canvas>
 <div id="status"></div>
 <div id="hint">
-  <p><b>Belisque</b> (polegar + indicador) e arraste para esticar uma corda de luz.<br>
-  Com <b>as duas mãos</b> belisque ao mesmo tempo para esticar entre elas.</p>
-  <p>Passe o <b>dedo indicador</b> através da corda para tocar. Corda longa = grave, curta = agudo.</p>
+  <p><b>Modo CRIAR</b> (azul): junte polegar + indicador, arraste e solte para esticar uma corda. Com as duas mãos ao mesmo tempo, a corda fica entre elas.</p>
+  <p><b>Modo TOCAR</b> (verde): nenhuma corda nova é criada; passe qualquer dedo pelas cordas. Corda longa = grave, curta = agudo.</p>
 </div>
 <button id="snd" hidden>Som desligado: toque aqui para ativar</button>
 <div id="ui">
@@ -44,7 +44,20 @@ button:focus-visible,select:focus-visible{outline:2px solid #7fd4ff;outline-offs
     <option value="crom">Cromática</option>
     <option value="livre">Livre (sem afinar)</option>
   </select>
-  <button id="mode">Toque: tocar</button>
+  <button id="mode" class="criar">Modo: CRIAR cordas</button>
+  <select id="inst" aria-label="Som">
+    <option value="electric_guitar_clean">Guitarra limpa</option>
+    <option value="electric_guitar_jazz">Guitarra jazz</option>
+    <option value="acoustic_guitar_steel">Violão aço</option>
+    <option value="acoustic_guitar_nylon">Violão nylon</option>
+    <option value="orchestral_harp">Harpa</option>
+    <option value="ks">Sintético</option>
+  </select>
+  <select id="amb" aria-label="Ambiência">
+    <option value="seco">Seco</option>
+    <option value="ambiente" selected>Ambiente</option>
+    <option value="espacial">Espacial</option>
+  </select>
   <button id="vid">Vídeo: escuro</button>
   <button id="flip">Trocar câmera</button>
 </div>
@@ -81,9 +94,12 @@ const mtof=m=>440*2**((m-69)/12);
 const noteName=m=>{const r=Math.round(m);return NOTES[(r%12+12)%12]+(Math.floor(r/12)-1)+(Math.abs(m-r)>0.05?'≈':'')};
 const hueOf=m=>(190+((m%12)+12)%12*30)%360;
 
-/* ---------- áudio: corda dedilhada (Karplus-Strong) ---------- */
-let ac=null,master=null;
-let unlockEl=null;
+/* ---------- áudio: amostras reais de guitarra + ambiência ---------- */
+const SF=['sons/','https://gleitz.github.io/midi-js-soundfonts/FluidR3_GM/']; // amostras FluidR3_GM (CC BY 3.0)
+const FLAT=['C','Db','D','Eb','E','F','Gb','G','Ab','A','Bb','B'];
+const sName=m=>FLAT[m%12]+(Math.floor(m/12)-1);
+let inst='electric_guitar_clean';
+let ac=null,bus=null,unlockEl=null,fx=null;
 function silentWav(){ // 0,5 s de silêncio: faz o iOS tocar como mídia mesmo com a chave de silencioso
   const sr=8000,n=4000,b=new Uint8Array(44+n),v=new DataView(b.buffer),w=(o,s)=>[...s].forEach((c,i)=>b[o+i]=c.charCodeAt(0));
   w(0,'RIFF');v.setUint32(4,36+n,true);w(8,'WAVEfmt ');v.setUint32(16,16,true);v.setUint16(20,1,true);v.setUint16(22,1,true);
@@ -97,43 +113,85 @@ function unlockAudio(){
   if(ac&&ac.state!=='running') ac.resume().catch(()=>{});
 }
 function audioOK(){return ac&&ac.state==='running'}
+function impulse(sec){
+  const sr=ac.sampleRate,n=sr*sec|0,b=ac.createBuffer(2,n,sr);
+  for(let c=0;c<2;c++){const d=b.getChannelData(c);let lp=0;for(let i=0;i<n;i++){const k=0.35+0.55*(i/n);lp=lp*k+(Math.random()*2-1)*(1-k);d[i]=lp*2.2*Math.pow(1-i/n,2.6)}}
+  return b;
+}
 function initAudio(){
   if(ac) return;
   unlockAudio();
   ac=new (window.AudioContext||window.webkitAudioContext)();
-  ac.onstatechange=()=>{if(ac.state!=='running'){ac.resume().catch(()=>{})}};
-  // destrava tocando um buffer mudo dentro do gesto do usuário
+  ac.onstatechange=()=>{if(ac.state!=='running')ac.resume().catch(()=>{})};
   const sb=ac.createBuffer(1,1,22050),ss=ac.createBufferSource();ss.buffer=sb;ss.connect(ac.destination);ss.start(0);
-  const comp=ac.createDynamicsCompressor();
-  master=ac.createGain();master.gain.value=0.8;
-  const conv=ac.createConvolver(),wet=ac.createGain();wet.gain.value=0.38;
-  const sr=ac.sampleRate,n=sr*2.8|0,ir=ac.createBuffer(2,n,sr);
-  for(let c=0;c<2;c++){const d=ir.getChannelData(c);for(let i=0;i<n;i++)d[i]=(Math.random()*2-1)*Math.pow(1-i/n,3)}
-  conv.buffer=ir;
-  master.connect(comp);master.connect(conv);conv.connect(wet);wet.connect(comp);comp.connect(ac.destination);
+  const comp=ac.createDynamicsCompressor();comp.threshold.value=-18;comp.ratio.value=3;
+  const out=ac.createGain();out.gain.value=0.9;comp.connect(out);out.connect(ac.destination);
+  bus=ac.createGain();
+  const dry=ac.createGain();bus.connect(dry);dry.connect(comp);
+  // chorus estéreo (dois atrasos modulados)
+  const chorus=ac.createGain();
+  for(const [side,rate] of [[-1,0.27],[1,0.41]]){
+    const d=ac.createDelay(0.05);d.delayTime.value=0.018;
+    const lfo=ac.createOscillator(),depth=ac.createGain();lfo.frequency.value=rate;depth.gain.value=0.004;lfo.connect(depth);depth.connect(d.delayTime);lfo.start();
+    const p=ac.createStereoPanner?ac.createStereoPanner():ac.createGain();if(p.pan)p.pan.value=side*0.8;
+    bus.connect(d);d.connect(p);p.connect(chorus);
+  }
+  chorus.connect(comp);
+  // delay pingue-pongue com repetições escurecendo
+  const dIn=ac.createGain(),dL=ac.createDelay(2),dR=ac.createDelay(2),fb=ac.createGain(),tone=ac.createBiquadFilter();
+  dL.delayTime.value=0.42;dR.delayTime.value=0.63;tone.type='lowpass';tone.frequency.value=2600;
+  const mg=ac.createChannelMerger(2);
+  bus.connect(dIn);dIn.connect(dL);dL.connect(dR);dR.connect(tone);tone.connect(fb);fb.connect(dL);
+  dL.connect(mg,0,0);dR.connect(mg,0,1);mg.connect(comp);
+  // reverb longo
+  const conv=ac.createConvolver();conv.buffer=impulse(4.5);const rv=ac.createGain();
+  bus.connect(conv);conv.connect(rv);rv.connect(comp);
+  fx={dry,chorus,dIn,fb,rv};setAmb(amb);
 }
-const bufCache=new Map();
-function pluckBuffer(f){
-  const key=Math.round(f*2);
-  if(bufCache.has(key)) return bufCache.get(key);
+const AMB={seco:{dry:1,ch:.15,d:0,fb:0,rv:.18},ambiente:{dry:.85,ch:.35,d:.22,fb:.38,rv:.45},espacial:{dry:.7,ch:.5,d:.35,fb:.55,rv:.8}};
+let amb='ambiente';
+function setAmb(k){amb=k;if(!fx)return;const a=AMB[k];fx.dry.gain.value=a.dry;fx.chorus.gain.value=a.ch;fx.dIn.gain.value=a.d;fx.fb.gain.value=a.fb;fx.rv.gain.value=a.rv}
+
+// amostras: carregadas sob demanda e guardadas
+const samp=new Map(),loading=new Map();
+function getSample(m){
+  const key=inst+':'+m;
+  if(samp.has(key)||loading.has(key)||inst==='ks') return loading.get(key);
+  const file=`${inst}-mp3/${sName(m)}.mp3`,get=u=>fetch(u).then(r=>{if(!r.ok)throw 0;return r.arrayBuffer()});
+  const p=get(SF[0]+file).catch(()=>get(SF[1]+file))
+    .then(b=>new Promise((res,rej)=>ac.decodeAudioData(b,res,rej))).then(buf=>{samp.set(key,buf);return buf}).catch(()=>null);
+  loading.set(key,p);return p;
+}
+async function preloadAll(){
+  if(inst==='ks') return;
+  const want=inst,ms=[];for(let m=33;m<=93;m++)ms.push(m);
+  let done=0;const total=ms.length;
+  const worker=async()=>{while(ms.length&&want===inst){await getSample(ms.shift());done++;if(done%6===0||done===total)setStatus(done<total?`Carregando sons… ${done}/${total}`:'')}};
+  await Promise.all([worker(),worker(),worker(),worker()]);
+}
+// reserva: corda sintética (Karplus-Strong) enquanto a amostra não chega ou sem internet
+const ksCache=new Map();
+function ksBuffer(f){
+  const key=Math.round(f*2);if(ksCache.has(key))return ksCache.get(key);
   const sr=ac.sampleRate,T=f<150?4:3,n=Math.floor(sr*T),b=ac.createBuffer(1,n,sr),y=b.getChannelData(0);
-  const P=sr/f-0.5, g=Math.pow(0.001,1/(f*T));
-  const init=Math.min(n,Math.ceil(P)+2);let lp=0;
+  const P=sr/f-0.5,g=Math.pow(0.001,1/(f*T)),init=Math.min(n,Math.ceil(P)+2);let lp=0;
   for(let i=0;i<init;i++){lp=lp*0.45+(Math.random()*2-1)*0.55;y[i]=lp}
-  let zp=0;
-  for(let i=init;i<n;i++){const t=i-P,k=Math.floor(t),fr=t-k,z=y[k]*(1-fr)+y[k+1]*fr;y[i]=g*(0.5*z+0.5*zp);zp=z}
-  const fade=Math.floor(sr*0.05);for(let i=0;i<fade;i++)y[n-1-i]*=i/fade;
-  if(bufCache.size>90) bufCache.delete(bufCache.keys().next().value);
-  bufCache.set(key,b);return b;
+  let zp=0;for(let i=init;i<n;i++){const t=i-P,k=Math.floor(t),fr=t-k,z=y[k]*(1-fr)+y[k+1]*fr;y[i]=g*(0.5*z+0.5*zp);zp=z}
+  if(ksCache.size>90)ksCache.delete(ksCache.keys().next().value);ksCache.set(key,b);return b;
 }
-function play(f,vel,pan){
+function play(midi,vel,pan){
   if(!ac) return;
   if(ac.state!=='running') ac.resume().catch(()=>{});
-  const src=ac.createBufferSource();src.buffer=pluckBuffer(f);
-  const g=ac.createGain();g.gain.value=vel;src.connect(g);
-  let out=g;
-  if(ac.createStereoPanner){const p=ac.createStereoPanner();p.pan.value=Math.max(-1,Math.min(1,pan))*0.7;g.connect(p);out=p}
-  out.connect(master);src.start();
+  const near=Math.round(midi),buf=samp.get(inst+':'+near);
+  const src=ac.createBufferSource(),t=ac.currentTime;
+  if(buf){src.buffer=buf;src.playbackRate.value=2**((midi-near)/12)}
+  else{getSample(near);src.buffer=ksBuffer(mtof(midi))}
+  const tone=ac.createBiquadFilter();tone.type='lowpass';tone.frequency.value=1800+vel*9000;tone.Q.value=0.5;
+  const g=ac.createGain(),lvl=(buf?0.9:0.6)*vel;
+  g.gain.setValueAtTime(lvl,t);g.gain.setValueAtTime(lvl,t+3.2);g.gain.linearRampToValueAtTime(0,t+4.5);
+  src.connect(tone);tone.connect(g);
+  let o=g;if(ac.createStereoPanner){const p=ac.createStereoPanner();p.pan.value=Math.max(-1,Math.min(1,pan))*0.7;g.connect(p);o=p}
+  o.connect(bus);src.start(t);src.stop(t+4.6);
 }
 
 /* ---------- cordas e faíscas ---------- */
@@ -148,7 +206,7 @@ function addString(a,b){
 function pluck(s,pos,vel){
   const now=performance.now(); if(now-s.last<90) return;
   s.last=now;s.t0=now;s.amp=5+15*vel;s.pos=pos;s.label=now;
-  play(s.f,0.2+0.65*vel,((s.a.x+s.b.x)/W)-1);
+  play(s.midi,0.25+0.7*vel,((s.a.x+s.b.x)/W)-1);
   const n=8+vel*16|0;
   for(let i=0;i<n;i++)sparks.push({s,u:pos,v:(Math.random()<.5?-1:1)*(0.4+Math.random()*1.1),life:1,size:1+Math.random()*2.2});
   if(sparks.length>600)sparks.splice(0,sparks.length-600);
@@ -198,12 +256,13 @@ async function loadModel(){
   catch(e){landmarker=await HandLandmarker.createFromOptions(fs,opts('CPU'))}
 }
 
+const TIPS=[4,8,12,16,20];
 function onResults(res,now){
   const seen=new Set();
   res.landmarks.forEach((lm,i)=>{
     let key=res.handedness?.[i]?.[0]?.categoryName||'H'; if(seen.has(key)) key+=i; seen.add(key);
     let h=hands.get(key);
-    if(!h){h={pinch:false,start:null,pin:null,tips:{},prev:{},pts:null,seen:0,released:false};hands.set(key,h)}
+    if(!h){h={pinch:false,pinchT:0,start:null,pin:null,tips:{},prev:{},pts:null,seen:0,released:false};hands.set(key,h)}
     h.seen=now;
     const P=lm.map(toScreen);h.pts=P;
     const size=Math.hypot(P[0].x-P[9].x,P[0].y-P[9].y)||1;
@@ -211,36 +270,47 @@ function onResults(res,now){
     const pin={x:(P[4].x+P[8].x)/2,y:(P[4].y+P[8].y)/2};
     h.pin=h.pin?lerp(h.pin,pin,.6):pin;
     const was=h.pinch;
-    if(!was&&d<0.32) h.pinch=true; else if(was&&d>0.5) h.pinch=false;
-    if(!was&&h.pinch) h.start={...h.pin};
+    if(!was&&d<0.24) h.pinch=true; else if(was&&d>0.42) h.pinch=false;
+    if(!was&&h.pinch){h.start={...h.pin};h.pinchT=now}
     if(was&&!h.pinch) h.released=true;
-    for(const k of [8,12]){h.prev[k]=h.tips[k];h.tips[k]=h.tips[k]?lerp(h.tips[k],P[k],.75):P[k]}
+    for(const k of TIPS){h.prev[k]=h.tips[k];h.tips[k]=h.tips[k]?lerp(h.tips[k],P[k],.8):P[k]}
   });
 }
 
 function handLogic(now){
   for(const [k,h] of hands) if(now-h.seen>350){hands.delete(k);if(two&&(two.a===h||two.b===h))two=null}
-  const list=[...hands.values()],pinching=list.filter(h=>h.pinch);
-  if(pinching.length>=2) two={a:pinching[0],b:pinching[1]};
-  for(const h of list){
-    if(h.released){
-      if(two&&(two.a===h||two.b===h)){addString(two.a.pin,two.b.pin);two.a.start=null;two.b.start=null;two=null}
-      else if(h.start) addString(h.start,h.pin);
-      h.start=null;h.released=false;
+  const list=[...hands.values()];
+  if(mode==='criar'){
+    // MODO CRIAR: só pinça cria cordas; os dedos não tocam
+    const pinching=list.filter(h=>h.pinch);
+    if(pinching.length>=2) two={a:pinching[0],b:pinching[1]};
+    for(const h of list){
+      if(h.released){
+        if(two&&(two.a===h||two.b===h)){addString(two.a.pin,two.b.pin);two.a.start=null;two.b.start=null;two=null}
+        else if(h.start&&now-h.pinchT>150) addString(h.start,h.pin);
+        h.start=null;h.released=false;
+      }
     }
-    if(!h.pinch) for(const k of [8,12]) if(h.prev[k]) strum(h.prev[k],h.tips[k]);
-    for(const k of [8,12]) h.prev[k]=h.tips[k];
+  }else{
+    // MODO TOCAR: nenhuma corda nova; qualquer ponta de dedo dedilha
+    two=null;
+    for(const h of list){
+      h.start=null;h.released=false;
+      for(const k of TIPS) if(h.prev[k]&&h.tips[k]) strum(h.prev[k],h.tips[k]);
+    }
   }
+  for(const h of list) for(const k of TIPS) h.prev[k]=h.tips[k];
 }
 function preview(){
+  if(mode!=='criar') return null;
   if(two&&two.a.pinch&&two.b.pinch) return [two.a.pin,two.b.pin];
   for(const h of hands.values()) if(h.pinch&&h.start) return [h.start,h.pin];
-  if(ptr&&mode==='criar') return [ptr.start,ptr.cur];
+  if(ptr) return [ptr.start,ptr.cur];
   return null;
 }
 
 /* ---------- toque / mouse ---------- */
-let mode='tocar',ptr=null;
+let mode='criar',ptr=null;
 cv.addEventListener('pointerdown',e=>{cv.setPointerCapture(e.pointerId);const p={x:e.clientX,y:e.clientY};ptr={id:e.pointerId,start:p,cur:p,last:p}});
 cv.addEventListener('pointermove',e=>{if(!ptr||e.pointerId!==ptr.id)return;const p={x:e.clientX,y:e.clientY};if(mode==='tocar')strum(ptr.last,p);ptr.last=p;ptr.cur=p});
 const endPtr=e=>{if(!ptr||e.pointerId!==ptr.id)return;if(mode==='criar')addString(ptr.start,ptr.cur);ptr=null};
@@ -305,8 +375,9 @@ function frame(){
   }
   for(const h of hands.values()){
     if(!h.pts) continue;
-    for(const k of [4,8,12]){const p=k===4?h.pts[4]:h.tips[k];ctx.beginPath();ctx.arc(p.x,p.y,k===8?5:3.5,0,7);ctx.fillStyle='rgba(170,230,255,.7)';ctx.fill()}
-    if(h.pinch){ctx.beginPath();ctx.arc(h.pin.x,h.pin.y,12,0,7);ctx.lineWidth=2;ctx.strokeStyle='rgba(255,255,255,.85)';ctx.stroke()}
+    const tipCol=mode==='tocar'?'rgba(120,255,170,.85)':'rgba(170,230,255,.6)';
+    for(const k of (mode==='tocar'?TIPS:[4,8])){const p=h.tips[k]||h.pts[k];ctx.beginPath();ctx.arc(p.x,p.y,mode==='tocar'?6:4,0,7);ctx.fillStyle=tipCol;ctx.fill()}
+    if(mode==='criar'&&h.pinch){ctx.beginPath();ctx.arc(h.pin.x,h.pin.y,12,0,7);ctx.lineWidth=2;ctx.strokeStyle='rgba(255,255,255,.85)';ctx.stroke()}
   }
   ctx.globalCompositeOperation='source-over';
   for(const s of strings) drawLabel(s,now);
@@ -318,20 +389,23 @@ function frame(){
 $('undo').onclick=()=>strings.pop();
 $('clear').onclick=()=>{strings.length=0;sparks.length=0};
 $('scale').onchange=e=>{scale=e.target.value;strings.forEach(retune);strings.forEach(s=>s.label=performance.now())};
-$('mode').onclick=e=>{mode=mode==='tocar'?'criar':'tocar';e.target.textContent='Toque: '+mode};
+function setMode(m){mode=m;two=null;ptr=null;for(const h of hands.values()){h.start=null;h.released=false}const b=$('mode');b.textContent=m==='criar'?'Modo: CRIAR cordas':'Modo: TOCAR';b.className=m;setStatus(m==='criar'?'Belisque e arraste para criar cordas':'Passe os dedos pelas cordas para tocar');clearTimeout(setMode.t);setMode.t=setTimeout(()=>setStatus(''),2200)}
+$('mode').onclick=()=>setMode(mode==='criar'?'tocar':'criar');
+$('inst').onchange=e=>{inst=e.target.value;preloadAll()};
+$('amb').onchange=e=>setAmb(e.target.value);
 const VIDS=[['escuro',.45],['claro',.85],['oculto',0]];let vi=0;
 $('vid').onclick=e=>{vi=(vi+1)%3;vidAlpha=VIDS[vi][1];e.target.textContent='Vídeo: '+VIDS[vi][0]};
 $('flip').onclick=async()=>{facing=facing==='user'?'environment':'user';try{await startCam()}catch(e){setStatus('Não consegui trocar de câmera')}};
 for(const ev of ['pointerdown','touchend','click']) document.addEventListener(ev,()=>{if(ac&&!audioOK())unlockAudio()},true);
-$('snd').onclick=()=>{unlockAudio();setTimeout(()=>play(mtof(64),.6,0),60)};
-function chime(){[57,64,69].forEach((m,i)=>setTimeout(()=>play(mtof(m),.45,i-1),i*110))}
+$('snd').onclick=()=>{unlockAudio();setTimeout(()=>play(64,.6,0),60)};
+function chime(){[57,64,69].forEach((m,i)=>setTimeout(()=>play(m,.5,i-1),i*110))}
 $('go').onclick=async()=>{
   initAudio();try{await ac.resume()}catch(e){}
-  chime();
+  chime();preloadAll();
   $('start').remove();requestAnimationFrame(frame);
   setStatus('Abrindo câmera…');
   try{await startCam()}catch(e){
-    setStatus('Sem câmera: crie e toque cordas com o dedo (botão “Toque”).');mode='criar';$('mode').textContent='Toque: criar';return;
+    setStatus('Sem câmera: crie e toque cordas com o dedo (botão “Toque”).');setMode('criar');return;
   }
   unlockAudio(); // a câmera costuma interromper o áudio no iPhone
   setStatus('Carregando rastreamento de mãos…');
@@ -339,5 +413,6 @@ $('go').onclick=async()=>{
   unlockAudio();
 };
 </script>
+<!-- Sons: FluidR3_GM (Frank Wen) via gleitz/midi-js-soundfonts, licença CC BY 3.0 -->
 </body>
 </html>
