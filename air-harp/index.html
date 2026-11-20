@@ -287,7 +287,7 @@ function initAudio(){
   padBus=ac.createGain();const padDry=ac.createGain();padDry.gain.value=.6;padBus.connect(padDry);padDry.connect(comp);
   const padRv=ac.createGain();padRv.gain.value=.8;padBus.connect(padRv);padRv.connect(conv);const padSh=ac.createGain();padSh.gain.value=.5;padBus.connect(padSh);padSh.connect(shim);
   drumBus=ac.createGain();drumBus.connect(comp);const drRoom=ac.createGain();drRoom.gain.value=.55;drumBus.connect(drRoom);drRoom.connect(room);
-  const drRv=ac.createGain();drRv.gain.value=.12;drumBus.connect(drRv);drRv.connect(conv);
+  const drRv=ac.createGain();drRv.gain.value=.05;drumBus.connect(drRv);drRv.connect(conv);
   bassBus=ac.createGain();const bComp=ac.createDynamicsCompressor();bComp.threshold.value=-20;bComp.ratio.value=4;bassBus.connect(bComp);bComp.connect(comp);
   const bRoom=ac.createGain();bRoom.gain.value=.15;bassBus.connect(bRoom);bRoom.connect(room);
   const loadIR=u=>fetch(SF+u).then(r=>r.arrayBuffer()).then(b=>new Promise((res,rej)=>ac.decodeAudioData(b,res,rej)));
@@ -388,9 +388,9 @@ function sampleNote(inst,midi,vel,pn,dest,t,len,att,rel){
   return out;
 }
 // ---------- bateria acústica gravada (baqueta: SM Drums · vassourinha: Swirly Drums) ----------
-const KITS={baqueta:{kick:[2,2,2,2],snare:[2,2,2,2,2],rim:[2,2,2],hat:[2,2,2,2],hatO:[1,1,1],ride:[2,2,2],crash:[1,1],tom1:[1,1,1],tom2:[1,1,1],tom3:[1,1,1]},
-  vassoura:{kick:[1,1,1,1],snare:[2,2,2,2,2],rim:[2,2,2],stir:[1,1],hat:[2,2,2,2],hatO:[1,1,1],ride:[2,2,2],crash:[1,1],tom1:[1,1,1],tom2:[1,1,1],tom3:[1,1,1]}};
-const KGAIN={kick:1,snare:.85,rim:.7,stir:.55,hat:.5,hatO:.45,ride:.5,crash:.42,tom1:.75,tom2:.75,tom3:.8};
+const KITS={baqueta:{kick:[2,2,2,2],snare:[2,2,2,2,2],rim:[2,2,2],hat:[3,3,3,3,3,3],hatO:[2,2,2,2],ride:[3,3,3,3,3],crash:[2,2,2,2],tom1:[1,1,1],tom2:[1,1,1],tom3:[1,1,1]},
+  vassoura:{kick:[1,1,1,1],snare:[3,3,3,3,3],rim:[2,2,2],stir:[1,1],hat:[3,3,3,3,3,3],hatO:[2,2,2,2],ride:[3,3,3,3,3],crash:[2,2,2,2],tom1:[1,1,1],tom2:[1,1,1],tom3:[1,1,1]}};
+const KGAIN={kick:1,snare:.85,rim:.7,stir:.6,hat:.42,hatO:.4,ride:.42,crash:.38,tom1:.75,tom2:.75,tom3:.8};
 const KPAN={hat:.3,hatO:.3,ride:-.3,crash:-.35,tom1:.25,tom3:-.25};
 const dsamp=new Map(),dnorm={},kitLoaded={};
 const curKit=()=>cfg.kit==='auto'?(S().kit||'baqueta'):cfg.kit;
@@ -398,18 +398,21 @@ async function loadKit(kit){
   if(kitLoaded[kit])return kitLoaded[kit];
   return kitLoaded[kit]=Promise.all(Object.entries(KITS[kit]).map(async([pc,lays])=>{
     await Promise.all(lays.flatMap((n,li)=>range(0,n-1).map(async ri=>{
-      try{const b=await fetch(`${SF}kit-${kit}/${pc}_${li}_${ri}.mp3`).then(r=>{if(!r.ok)throw 0;return r.arrayBuffer()});
+      try{const b=await fetch(`${SF}kit-${kit}/${pc}_${li}_${ri}.mp3?v=4`).then(r=>{if(!r.ok)throw 0;return r.arrayBuffer()});
         const buf=await new Promise((res,rej)=>ac.decodeAudioData(b,res,rej));dsamp.set(`${kit}:${pc}:${li}:${ri}`,buf);
         if(li===lays.length-1&&ri===0)dnorm[kit+pc]=Math.min(8,.9*peakNorm(buf))}catch(e){}})));
   }));
 }
+let openHat=null;
 const hum=(t,ms)=>t+(Math.random()+Math.random()-1)*ms/1000; // pequenas imperfeições humanas de tempo
 function drum(pc,v,t){
   const kit=curKit(),L=KITS[kit][pc];if(!L)return;
   const li=Math.max(0,Math.min(L.length-1,Math.floor(v*L.length))),ri=Math.floor(Math.random()*L[li]),buf=dsamp.get(`${kit}:${pc}:${li}:${ri}`);if(!buf)return;
-  const s=ac.createBufferSource();s.buffer=buf;s.playbackRate.value=1+(Math.random()-.5)*.012;
+  const CYM=pc==='hat'||pc==='hatO'||pc==='ride'||pc==='crash';
+  if(pc==='hat'&&openHat){const o=openHat;openHat=null;o.gain.cancelScheduledValues(t);o.gain.setTargetAtTime(0,Math.max(t,ac.currentTime),.025)} // chimbal fechando corta o aberto
+  const s=ac.createBufferSource();s.buffer=buf;s.playbackRate.value=CYM?1:1+(Math.random()-.5)*.01;
   const g=ac.createGain();g.gain.value=(dnorm[kit+pc]||1)*KGAIN[pc]*(.75+.25*v)*(.92+Math.random()*.16);
-  const p=pan(KPAN[pc]||0);s.connect(g);g.connect(p);p.connect(drumBus);s.start(Math.max(t,ac.currentTime));
+  const p=pan(KPAN[pc]||0);s.connect(g);g.connect(p);p.connect(drumBus);s.start(Math.max(t,ac.currentTime));if(pc==='hatO')openHat=g;
 }
 
 async function preloadAll(){setStatus('Carregando instrumentos gravados…');await Promise.all([preload(cfg.inst),preload('bass'),loadKit(curKit()),preload('strings')]);setStatus('',1);
