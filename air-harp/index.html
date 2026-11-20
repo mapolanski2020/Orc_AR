@@ -109,6 +109,7 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
     <option value="4">4</option><option value="8">8</option><option value="12">12 (blues)</option><option value="16">16</option>
     <option value="24">24 (2 voltas)</option><option value="32">32</option><option value="0">Até eu parar</option></select></label>
   <h3>Mixer</h3>
+  <label class="wide">Abertura estéreo<select data-cfg="width" data-num><option value="0">Mono (recomendado no celular)</option><option value="35">Estéreo leve</option><option value="100">Estéreo largo (fone)</option></select></label>
   <label>Bateria<input type="range" min="0" max="150" data-cfg="vDrums" data-num></label>
   <label>Baixo<input type="range" min="0" max="150" data-cfg="vBass" data-num></label>
   <label>Acordes<input type="range" min="0" max="150" data-cfg="vKeys" data-num></label>
@@ -194,12 +195,12 @@ const STY={
 
 /* ================= configurações ================= */
 const DEF={style:'neoblues',prog:'blues12',key:4,custom:'Am7 D9 Fmaj7 E7#9',bpm:56,inst:'electric_piano_1',fx:'soul',room:'auto',bars:12,
-  layers:{drums:true,bass:true,keys:true,atmos:true,arp:false},auto:true,vDrums:100,vBass:100,vKeys:100,vAtmos:80};
+  layers:{drums:true,bass:true,keys:true,atmos:true,arp:false},auto:true,vDrums:100,vBass:100,vKeys:100,vAtmos:80,width:0};
 const cfg={...DEF,...store.get('bpad-cfg',{})};cfg.layers={...DEF.layers,...(cfg.layers||{})};
 const saveCfg=()=>store.set('bpad-cfg',cfg);
 
 /* ================= áudio ================= */
-let ac=null,master=null,keysBus=null,padBus=null,drumBus=null,bassBus=null,fx=null,anL=null,anR=null;const irCache={};
+let wGain=null,ac=null,master=null,keysBus=null,padBus=null,drumBus=null,bassBus=null,fx=null,anL=null,anR=null;const irCache={};
 const SF='sons/',SF2='https://gleitz.github.io/midi-js-soundfonts/FluidR3_GM/';
 const FLAT=['C','Db','D','Eb','E','F','Gb','G','Ab','A','Bb','B'];
 const sName=m=>FLAT[m%12]+(Math.floor(m/12)-1);
@@ -243,7 +244,11 @@ function initAudio(){
   const comp=ac.createDynamicsCompressor();comp.threshold.value=-16;comp.ratio.value=3;comp.attack.value=.01;comp.release.value=.2;
   const lim=ac.createDynamicsCompressor();lim.threshold.value=-2;lim.ratio.value=20;lim.attack.value=.002;lim.release.value=.1;
   master=ac.createGain();master.gain.value=.8;const soft=ac.createWaveShaper();soft.curve=(()=>{const n=4096,c=new Float32Array(n);for(let i=0;i<n;i++){const x=(i/(n-1)*2-1)*2;c[i]=Math.tanh(x)}return c})();soft.oversample='2x';
-  comp.connect(lim);lim.connect(soft);soft.connect(master);master.connect(ac.destination);
+  comp.connect(lim);lim.connect(soft);
+  // abertura estéreo: L' = a·L + b·R, R' = b·L + a·R  (largura 0 = mono, 1 = estéreo total)
+  const spW=ac.createChannelSplitter(2),mgW=ac.createChannelMerger(2);wGain={};
+  for(const [n,from,to] of [['LL',0,0],['RL',1,0],['LR',0,1],['RR',1,1]]){const g=ac.createGain();spW.connect(g,from);g.connect(mgW,0,to);wGain[n]=g}
+  soft.connect(spW);mgW.connect(master);master.connect(ac.destination);
   const sp=ac.createChannelSplitter(2);master.connect(sp);anL=ac.createAnalyser();anR=ac.createAnalyser();anL.fftSize=anR.fftSize=1024;sp.connect(anL,0);sp.connect(anR,1);
   const conv=ac.createConvolver();conv.buffer=makeIR('padrao');const rvOut=ac.createGain();conv.connect(rvOut);rvOut.connect(comp);
   const room=ac.createConvolver();room.buffer=makeIR('quarto');const roomOut=ac.createGain();roomOut.gain.value=.5;room.connect(roomOut);roomOut.connect(comp);
@@ -333,6 +338,7 @@ function applyFx(){
   const room=cfg.room==='auto'?a.room:cfg.room;if(fx.conv.roomType!==room){fx.conv.buffer=makeIR(room);fx.conv.roomType=room}
 }
 function applyMix(){if(!ac)return;const T=(g,v)=>g.gain.setTargetAtTime(v,ac.currentTime,.05);
+  const w=cfg.width/100,a=(1+w)/2,b=(1-w)/2;T(wGain.LL,a);T(wGain.RR,a);T(wGain.RL,b);T(wGain.LR,b);
   T(drumBus,cfg.vDrums/100*.95);T(bassBus,cfg.vBass/100*1.1);T(keysBus,cfg.vKeys/100);T(padBus,cfg.vAtmos/100*.55)}
 
 // ---------- amostras (normalizadas pelo pico) ----------
@@ -520,7 +526,7 @@ function applyCfg(k){
   if(k==='bpm'||k==='style'||k==='fx'||k==='room') applyFx();
   if(k==='key'||k==='prog'||k==='custom'){latched=null;cfg.auto=true;if(playing&&ac){barIdx=0;stepInBar=0;cur=null}}
   if(k==='inst'&&ac) preload(cfg.inst);
-  if(k[0]==='v') applyMix();
+  if(k[0]==='v'||k==='width') applyMix();
   syncUI();saveCfg();
 }
 document.querySelectorAll('[data-cfg]').forEach(el=>{const k=el.dataset.cfg,ev=el.type==='range'?'input':'change';
@@ -615,7 +621,7 @@ $('discV').onclick=()=>{$('save').hidden=true;recFile=null};
 /* ================= início ================= */
 for(const ev of ['pointerdown','touchend','click'])document.addEventListener(ev,()=>{if(ac&&ac.state!=='running')unlockAudio()},true);
 fillSelects();syncUI();
-window.__bp={cfg,get ac(){return ac},get cur(){return cur},get playing(){return playing},get rec(){return recFile},get bar(){return barIdx},get lvl(){if(!anL)return 0;anL.getFloatTimeDomainData(bufL);let m=0;for(const x of bufL)m=Math.max(m,Math.abs(x));return m}};
+window.__bp={cfg,get ac(){return ac},get cur(){return cur},get playing(){return playing},get rec(){return recFile},get bar(){return barIdx},get side(){if(!anL)return 0;anL.getFloatTimeDomainData(bufL);anR.getFloatTimeDomainData(bufR);let d=0,m=0;for(let i=0;i<1024;i++){d+=(bufL[i]-bufR[i])**2;m+=(bufL[i]+bufR[i])**2}return m?Math.sqrt(d/m):0},get lvl(){if(!anL)return 0;anL.getFloatTimeDomainData(bufL);let m=0;for(const x of bufL)m=Math.max(m,Math.abs(x));return m}};
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('sw.js').catch(()=>{});
 $('go').onclick=async()=>{
   initAudio();try{await ac.resume()}catch(e){}
