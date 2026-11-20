@@ -15,7 +15,7 @@ button:focus-visible,select:focus-visible{outline:2px solid #7fd4ff;outline-offs
 #status{position:fixed;top:calc(10px + env(safe-area-inset-top));left:0;right:0;text-align:center;font-size:13px;opacity:.75;pointer-events:none}
 #hint{position:fixed;left:50%;top:42%;transform:translate(-50%,-50%);width:min(88vw,460px);text-align:center;pointer-events:none;opacity:.85;transition:opacity .6s}
 #hint b{color:#9fe3ff;font-weight:600}
-#mode{font-weight:700;min-width:190px}#mode.criar{background:#1b5fb8;border-color:#5fa8ff}#mode.tocar{background:#138a4a;border-color:#5fe39a}
+#mode{font-weight:700;min-width:190px}#mode.ambos{background:linear-gradient(90deg,#1b5fb8,#138a4a);border-color:#9fd8ff}#mode.criar{background:#1b5fb8;border-color:#5fa8ff}#mode.tocar{background:#138a4a;border-color:#5fe39a}
 #panel{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(76px + env(safe-area-inset-bottom));width:min(94vw,520px);display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;padding:14px;background:rgba(8,14,26,.9);border:1px solid rgba(140,200,255,.25);border-radius:16px;z-index:3}
 #panel{max-height:62vh;overflow:auto}#panel[hidden]{display:none!important}#panel .close{grid-column:1/-1;background:#334}#panel label{display:grid;gap:4px;font-size:13px;opacity:.95}#panel select{width:100%;font-size:16px}
 #chord{position:fixed;left:14px;top:calc(12px + env(safe-area-inset-top));font-size:20px;font-weight:600;letter-spacing:.02em;color:#ffe9b0;text-shadow:0 0 12px rgba(255,200,120,.6);pointer-events:none}
@@ -73,7 +73,7 @@ button:focus-visible,select:focus-visible{outline:2px solid #7fd4ff;outline-offs
   <button id="closeCfg" class="close">Fechar</button>
 </div>
 <div id="ui">
-  <button id="mode" class="criar">Modo: CRIAR cordas</button>
+  <button id="mode" class="ambos">Modo: CRIAR + TOCAR</button>
   <button id="harp">Montar harpa</button>
   <button id="undo">Desfazer</button>
   <button id="clear">Limpar</button>
@@ -339,7 +339,7 @@ function buildHarp(gliss){
   let i=ms.findIndex(m=>Lof(m)<=maxL);if(i<0)i=0;
   const n=Math.min(W<520?8:10,ms.length-i),sel=ms.slice(i,i+n),x0=W*0.1,x1=W*0.9;
   sel.forEach((m,j)=>{const x=x0+(x1-x0)*(n===1?.5:j/(n-1));addString({x,y:base},{x,y:base-Math.max(48,Lof(m))},m,true)});
-  harp=true;setMode('tocar');
+  harp=true;if(mode==='criar')setMode('ambos');
   if(gliss) strings.forEach((s,j)=>setTimeout(()=>pluck(s,.5,.35),j*90));
 }
 function pluck(s,pos,vel){
@@ -396,63 +396,83 @@ async function loadModel(){
 }
 
 const TIPS=[4,8,12,16,20];let fingers='dois';const playTips=()=>fingers==='ind'?[8]:fingers==='dois'?[8,12]:TIPS;
+const HOLD=220; // ms segurando a pinça antes de começar a corda
 function onResults(res,now){
   const seen=new Set();
   res.landmarks.forEach((lm,i)=>{
     let key=res.handedness?.[i]?.[0]?.categoryName||'H'; if(seen.has(key)) key+=i; seen.add(key);
     let h=hands.get(key);
-    if(!h){h={pinch:false,pinchT:0,start:null,pin:null,tips:{},prev:{},pts:null,seen:0,released:false};hands.set(key,h)}
+    if(!h){h={pinch:false,pinchT:0,relT:0,open:0,d:1,start:null,pin:null,tips:{},prev:{},pts:null,seen:0,released:false};hands.set(key,h)}
     h.seen=now;
     const P=lm.map(toScreen);h.pts=P;
-    const size=Math.hypot(P[0].x-P[9].x,P[0].y-P[9].y)||1;
-    const d=Math.hypot(P[4].x-P[8].x,P[4].y-P[8].y)/size;
+    // tamanho da mão estável em qualquer ângulo: maior entre palma (punho→médio) e largura (indicador→mindinho)
+    const size=Math.max(Math.hypot(P[0].x-P[9].x,P[0].y-P[9].y),Math.hypot(P[5].x-P[17].x,P[5].y-P[17].y)*1.25)||1;
+    const d=Math.hypot(P[4].x-P[8].x,P[4].y-P[8].y)/size;h.d=h.d*0.5+d*0.5;
     const pin={x:(P[4].x+P[8].x)/2,y:(P[4].y+P[8].y)/2};
-    h.pin=h.pin?lerp(h.pin,pin,.6):pin;
-    const was=h.pinch;
-    if(!was&&d<0.24) h.pinch=true; else if(was&&d>0.42) h.pinch=false;
-    if(!was&&h.pinch){h.start={...h.pin};h.pinchT=now}
-    if(was&&!h.pinch) h.released=true;
+    h.pin=h.pin?lerp(h.pin,pin,.55):pin;
+    if(!h.pinch){
+      if(h.d<0.3){h.pinch=true;h.open=0;h.start={...h.pin};h.pinchT=now}
+    }else{
+      // só solta depois de 3 leituras seguidas abertas (evita a corda “cair” no meio)
+      if(h.d>0.48){if(++h.open>=3){h.pinch=false;h.released=true;h.relT=now}}else h.open=0;
+    }
     for(const k of TIPS){h.prev[k]=h.tips[k];h.tips[k]=h.tips[k]?lerp(h.tips[k],P[k],.8):P[k]}
   });
 }
-
+const held=(h,now)=>h.pinch&&h.start&&now-h.pinchT>=HOLD;
 function handLogic(now){
-  for(const [k,h] of hands) if(now-h.seen>350){hands.delete(k);if(two&&(two.a===h||two.b===h))two=null}
-  const list=[...hands.values()];
-  if(mode==='criar'){
-    // MODO CRIAR: só pinça cria cordas; os dedos não tocam
-    const pinching=list.filter(h=>h.pinch);
+  for(const [k,h] of hands) if(now-h.seen>400){hands.delete(k);if(two&&(two.a===h||two.b===h))two=null}
+  const list=[...hands.values()],canCreate=mode!=='tocar',canPlay=mode!=='criar';
+  if(canCreate){
+    const pinching=list.filter(h=>held(h,now));
     if(pinching.length>=2) two={a:pinching[0],b:pinching[1]};
-    for(const h of list){
-      if(h.released){
+  }else two=null;
+  for(const h of list){
+    if(h.released){
+      if(canCreate){
         if(two&&(two.a===h||two.b===h)){addString(two.a.pin,two.b.pin);two.a.start=null;two.b.start=null;two=null}
-        else if(h.start&&now-h.pinchT>150) addString(h.start,h.pin);
-        h.start=null;h.released=false;
+        else if(h.start&&h.relT-h.pinchT>=HOLD&&Math.hypot(h.pin.x-h.start.x,h.pin.y-h.start.y)>=60) addString(h.start,h.pin);
       }
-    }
-  }else{
-    // MODO TOCAR: nenhuma corda nova; qualquer ponta de dedo dedilha
-    two=null;
-    for(const h of list){
       h.start=null;h.released=false;
-      for(const k of playTips()) if(h.prev[k]&&h.tips[k]) strum(h.prev[k],h.tips[k]);
     }
+    // não toca com a mão que está fazendo (ou quase fazendo) a pinça
+    if(canPlay&&!h.pinch&&h.d>0.42&&now-h.relT>250)
+      for(const k of playTips()) if(h.prev[k]&&h.tips[k]) strum(h.prev[k],h.tips[k]);
   }
   for(const h of list) for(const k of TIPS) h.prev[k]=h.tips[k];
 }
 function preview(){
-  if(mode!=='criar') return null;
-  if(two&&two.a.pinch&&two.b.pinch) return [two.a.pin,two.b.pin];
-  for(const h of hands.values()) if(h.pinch&&h.start) return [h.start,h.pin];
-  if(ptr) return [ptr.start,ptr.cur];
+  if(mode==='tocar') return null;
+  const now=performance.now();
+  if(two&&held(two.a,now)&&held(two.b,now)) return [two.a.pin,two.b.pin];
+  for(const h of hands.values()) if(held(h,now)) return [h.start,h.pin];
+  if(ptr&&ptr.create) return [ptr.start,ptr.cur];
   return null;
+}
+function drawPinchUI(h,now){
+  if(mode==='tocar'||!h.pts) return;
+  const th=h.pts[4],ix=h.pts[8],p=Math.max(0,Math.min(1,(0.8-h.d)/(0.8-0.3)));
+  if(!h.pinch&&p>0.05){ // guia: linha polegar–indicador e anel enchendo conforme fecha
+    ctx.lineWidth=2;ctx.strokeStyle=`rgba(255,215,120,${0.25+0.5*p})`;
+    ctx.beginPath();ctx.moveTo(th.x,th.y);ctx.lineTo(ix.x,ix.y);ctx.stroke();
+    ctx.beginPath();ctx.arc(h.pin.x,h.pin.y,16,-Math.PI/2,-Math.PI/2+p*Math.PI*2);ctx.lineWidth=3;ctx.stroke();
+  }
+  if(h.pinch){
+    const q=Math.min(1,(now-h.pinchT)/HOLD);
+    ctx.beginPath();ctx.arc(h.pin.x,h.pin.y,16,-Math.PI/2,-Math.PI/2+q*Math.PI*2);ctx.lineWidth=4;
+    ctx.strokeStyle=q<1?'rgba(255,215,120,.9)':'rgba(255,255,255,.95)';ctx.stroke();
+    if(q>=1&&h.start){ctx.beginPath();ctx.arc(h.start.x,h.start.y,7,0,7);ctx.fillStyle='rgba(255,230,160,.95)';ctx.fill()}
+  }
 }
 
 /* ---------- toque / mouse ---------- */
-let mode='criar',ptr=null;
-cv.addEventListener('pointerdown',e=>{cv.setPointerCapture(e.pointerId);const p={x:e.clientX,y:e.clientY};ptr={id:e.pointerId,start:p,cur:p,last:p}});
-cv.addEventListener('pointermove',e=>{if(!ptr||e.pointerId!==ptr.id)return;const p={x:e.clientX,y:e.clientY};if(mode==='tocar')strum(ptr.last,p);ptr.last=p;ptr.cur=p});
-const endPtr=e=>{if(!ptr||e.pointerId!==ptr.id)return;if(mode==='criar')addString(ptr.start,ptr.cur);ptr=null};
+let mode='ambos',ptr=null;
+cv.addEventListener('pointerdown',e=>{cv.setPointerCapture(e.pointerId);const p={x:e.clientX,y:e.clientY};ptr={id:e.pointerId,start:p,cur:p,last:p,create:mode==='criar'};
+  if(mode==='ambos'){const me=ptr;me.lp=setTimeout(()=>{if(ptr===me)me.create=true},350)}});
+cv.addEventListener('pointermove',e=>{if(!ptr||e.pointerId!==ptr.id)return;const p={x:e.clientX,y:e.clientY};
+  if(!ptr.create&&Math.hypot(p.x-ptr.start.x,p.y-ptr.start.y)>12)clearTimeout(ptr.lp);
+  if(!ptr.create&&mode!=='criar')strum(ptr.last,p);ptr.last=p;ptr.cur=p});
+const endPtr=e=>{if(!ptr||e.pointerId!==ptr.id)return;clearTimeout(ptr.lp);if(ptr.create)addString(ptr.start,ptr.cur);ptr=null};
 cv.addEventListener('pointerup',endPtr);cv.addEventListener('pointercancel',()=>ptr=null);
 
 /* ---------- desenho ---------- */
@@ -515,9 +535,9 @@ function frame(){
   }
   for(const h of hands.values()){
     if(!h.pts) continue;
-    const tipCol=mode==='tocar'?'rgba(120,255,170,.85)':'rgba(170,230,255,.6)';
-    for(const k of (mode==='tocar'?playTips():[4,8])){const p=h.tips[k]||h.pts[k];ctx.beginPath();ctx.arc(p.x,p.y,mode==='tocar'?(fingers==='todos'?6:9):4,0,7);ctx.fillStyle=tipCol;ctx.fill()}
-    if(mode==='criar'&&h.pinch){ctx.beginPath();ctx.arc(h.pin.x,h.pin.y,12,0,7);ctx.lineWidth=2;ctx.strokeStyle='rgba(255,255,255,.85)';ctx.stroke()}
+    const tipCol=mode!=='criar'?'rgba(120,255,170,.85)':'rgba(170,230,255,.6)';
+    for(const k of (mode!=='criar'?playTips():[4,8])){const p=h.tips[k]||h.pts[k];ctx.beginPath();ctx.arc(p.x,p.y,mode!=='criar'?(fingers==='todos'?6:9):4,0,7);ctx.fillStyle=tipCol;ctx.fill()}
+    drawPinchUI(h,now);
   }
   ctx.globalCompositeOperation='source-over';
   for(const s of strings) drawLabel(s,now);
@@ -540,8 +560,9 @@ function setPanel(open){const p=$('panel');p.hidden=!open;$('cfg').textContent=o
 $('cfg').onclick=()=>setPanel($('panel').hidden);
 $('closeCfg').onclick=()=>setPanel(false);
 cv.addEventListener('pointerdown',()=>{if(!$('panel').hidden)setPanel(false)},true);
-function setMode(m){mode=m;two=null;ptr=null;for(const h of hands.values()){h.start=null;h.released=false}const b=$('mode');b.textContent=m==='criar'?'Modo: CRIAR cordas':'Modo: TOCAR';b.className=m;setStatus(m==='criar'?'Belisque e arraste para criar cordas':'Passe os dedos pelas cordas para tocar');clearTimeout(setMode.t);setMode.t=setTimeout(()=>setStatus(''),2200)}
-$('mode').onclick=()=>setMode(mode==='criar'?'tocar':'criar');
+const MODES={ambos:['Modo: CRIAR + TOCAR','Pinça (polegar+indicador) cria · indicador e médio tocam'],tocar:['Modo: só TOCAR','Só toca; pinça não cria cordas'],criar:['Modo: só CRIAR','Só cria cordas; dedos não tocam']};
+function setMode(m){mode=m;two=null;ptr=null;for(const h of hands.values()){h.start=null;h.released=false}const b=$('mode');b.textContent=MODES[m][0];b.className=m;setStatus(MODES[m][1]);clearTimeout(setMode.t);setMode.t=setTimeout(()=>setStatus(''),2500)}
+$('mode').onclick=()=>setMode(mode==='ambos'?'tocar':mode==='tocar'?'criar':'ambos');
 $('inst').onchange=e=>{inst=e.target.value;preloadAll()};
 $('amb').onchange=e=>setAmb(e.target.value);
 const VIDS=[['escuro',.45],['claro',.85],['oculto',0]];let vi=0;
@@ -605,7 +626,7 @@ $('go').onclick=async()=>{
   $('start').remove();requestAnimationFrame(frame);
   setStatus('Abrindo câmera…');
   try{await startCam()}catch(e){
-    setStatus('Sem câmera: crie e toque cordas com o dedo (botão “Toque”).');setMode('criar');return;
+    setStatus('Sem câmera: arraste para tocar; segure e arraste para criar corda.');return;
   }
   unlockAudio(); // a câmera costuma interromper o áudio no iPhone
   setStatus('Carregando rastreamento de mãos…');
