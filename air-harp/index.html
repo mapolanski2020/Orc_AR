@@ -291,7 +291,8 @@ function getSample(m){
   if(samp.has(k)||loading.has(k)||cfg.inst==='ks') return loading.get(k);
   const file=`${cfg.inst}-mp3/${sName(m)}.mp3`,get=u=>fetch(u).then(r=>{if(!r.ok)throw 0;return r.arrayBuffer()});
   const p=get(SF[0]+file).catch(()=>get(SF[1]+file))
-    .then(b=>new Promise((res,rej)=>ac.decodeAudioData(b,res,rej))).then(buf=>{samp.set(k,buf);return buf}).catch(()=>null);
+    .then(b=>new Promise((res,rej)=>ac.decodeAudioData(b,res,rej))).then(buf=>{let pk=0;for(let c=0;c<buf.numberOfChannels;c++){const d=buf.getChannelData(c);for(let i=0;i<d.length;i++){const a=Math.abs(d[i]);if(a>pk)pk=a}}
+      buf.norm=pk>0?Math.min(12,1/pk):1;samp.set(k,buf);return buf}).catch(()=>null);
   loading.set(k,p);return p;
 }
 async function preloadAll(){
@@ -313,7 +314,7 @@ function ksBuffer(f){
 function voice(midi,lvl,pan,dest,attack,bright,at){
   const near=Math.max(33,Math.min(93,Math.round(midi))),buf=samp.get(cfg.inst+':'+near);
   const src=ac.createBufferSource(),t=at||ac.currentTime;let base=1;
-  if(buf){src.buffer=buf;base=2**((midi-near)/12)}
+  if(buf){src.buffer=buf;base=2**((midi-near)/12);lvl*=buf.norm||1}
   else{getSample(near);src.buffer=ksBuffer(mtof(midi));lvl*=0.7}
   src.playbackRate.value=base;
   const tone=ac.createBiquadFilter();tone.type='lowpass';tone.frequency.value=bright;tone.Q.value=0.5;
@@ -988,6 +989,7 @@ for(const ev of ['pointerdown','touchend','click']) document.addEventListener(ev
 $('snd').onclick=()=>{unlockAudio();setTimeout(()=>play(64,.6,0),60)};
 function chime(){[57,64,69].forEach((m,i)=>setTimeout(()=>play(m,.5,i-1),i*110))}
 syncUI();loopUI();
+window.__lvl=()=>{if(!an)return 0;const d=new Float32Array(an.fftSize);an.getFloatTimeDomainData(d);let m=0;for(const x of d)m=Math.max(m,Math.abs(x));return m};
 window.__harpa={strings,loop,cfg,get ac(){return ac},get bk(){return bkRec},get rec(){return recFile}};
 if('serviceWorker' in navigator&&location.protocol==='https:') navigator.serviceWorker.register('sw.js').catch(()=>{});
 $('go').onclick=async()=>{
