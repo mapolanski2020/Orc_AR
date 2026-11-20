@@ -1,6 +1,6 @@
 {
-  "name": "Harpa de Ar",
-  "short_name": "Harpa de Ar",
+  "name": "Backing Pad",
+  "short_name": "Backing Pad",
   "start_url": "./",
   "scope": "./",
   "display": "fullscreen",
