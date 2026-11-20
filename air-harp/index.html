@@ -515,7 +515,7 @@ function pluck(s,pos,vel,fk,fromLoop){
   const now=performance.now(); if(now-s.last<90) return;
   s.last=now;s.t0=now;s.amp=5+15*vel;s.pos=pos;s.label=now;
   const pan=((s.a.x+s.b.x)/W)-1,vs=play(s.midi,0.25+0.7*vel,pan);
-  s.voice=fk?{vs,t:now,fk,ref:null,holdT:0}:null;s.bend=0;
+  s.voice=null;s.bend=0;
   if(!fromLoop) loopRecord(s,pos,vel,pan);
   const n=8+vel*16|0;
   for(let i=0;i<n;i++)sparks.push({s,u:pos,v:(Math.random()<.5?-1:1)*(0.4+Math.random()*1.1),life:1,size:1+Math.random()*2.2});
@@ -774,7 +774,7 @@ function frame(){
     lastVT=video.currentTime;
     try{onResults(landmarker.detectForVideo(video,now),now)}catch(e){}
   }
-  handLogic(now);updateBends(now);readEnergy();
+  handLogic(now);readEnergy();
   if(cfg.theme==='prisma'){const ms=[...new Set(strings.map(s=>Math.round(s.midi)))].sort((a,b)=>a-b);prismRank=new Map(ms.map((m,i)=>[m,ms.length>1?270*i/(ms.length-1):0]))}
   ctx.globalCompositeOperation='source-over';
   ctx.fillStyle=BG[cfg.theme];ctx.fillRect(0,0,W,H);
