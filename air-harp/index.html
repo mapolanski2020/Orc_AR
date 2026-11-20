@@ -16,6 +16,9 @@ button:focus-visible,select:focus-visible{outline:2px solid #7fd4ff;outline-offs
 #hint{position:fixed;left:50%;top:42%;transform:translate(-50%,-50%);width:min(88vw,460px);text-align:center;pointer-events:none;opacity:.85;transition:opacity .6s}
 #hint b{color:#9fe3ff;font-weight:600}
 #mode{font-weight:700;min-width:190px}#mode.criar{background:#1b5fb8;border-color:#5fa8ff}#mode.tocar{background:#138a4a;border-color:#5fe39a}
+#panel{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(76px + env(safe-area-inset-bottom));width:min(94vw,520px);display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;padding:14px;background:rgba(8,14,26,.9);border:1px solid rgba(140,200,255,.25);border-radius:16px;z-index:3}
+#panel[hidden]{display:none}#panel label{display:grid;gap:4px;font-size:13px;opacity:.95}#panel select{width:100%;font-size:16px}
+#chord{position:fixed;left:14px;top:calc(12px + env(safe-area-inset-top));font-size:20px;font-weight:600;letter-spacing:.02em;color:#ffe9b0;text-shadow:0 0 12px rgba(255,200,120,.6);pointer-events:none}
 #snd{position:fixed;top:calc(36px + env(safe-area-inset-top));left:50%;transform:translateX(-50%);z-index:4;background:#c2410c;border:0;font-weight:600}
 #snd[hidden]{display:none}
 #start{position:fixed;inset:0;display:grid;place-items:center;background:radial-gradient(ellipse at 50% 40%,#0c1f3a,#02040a 70%);z-index:5;padding:24px}
@@ -30,36 +33,38 @@ button:focus-visible,select:focus-visible{outline:2px solid #7fd4ff;outline-offs
 <canvas id="c"></canvas>
 <div id="status"></div>
 <div id="hint">
-  <p><b>Modo CRIAR</b> (azul): junte polegar + indicador, arraste e solte para esticar uma corda. Com as duas mãos ao mesmo tempo, a corda fica entre elas.</p>
-  <p><b>Modo TOCAR</b> (verde): nenhuma corda nova é criada; passe qualquer dedo pelas cordas. Corda longa = grave, curta = agudo.</p>
+  <p>Toque <b>Montar harpa</b> para ter cordas já afinadas no tom, e passe o <b>indicador</b> por elas: cada corda é uma nota da escala, então qualquer sequência soa como melodia. As cordas que brilham mais são as notas do acorde do momento.</p>
+  <p><b>Modo CRIAR</b> (azul): junte polegar + indicador, arraste e solte para esticar sua própria corda. <b>Modo TOCAR</b> (verde): só toca.</p>
 </div>
 <button id="snd" hidden>Som desligado: toque aqui para ativar</button>
-<div id="ui">
-  <button id="undo">Desfazer</button>
-  <button id="clear">Limpar</button>
-  <select id="scale" aria-label="Escala">
-    <option value="penta">Pentatônica</option>
-    <option value="menor">Pentatônica menor</option>
-    <option value="maior">Maior</option>
-    <option value="crom">Cromática</option>
-    <option value="livre">Livre (sem afinar)</option>
-  </select>
-  <button id="mode" class="criar">Modo: CRIAR cordas</button>
-  <select id="inst" aria-label="Som">
-    <option value="electric_guitar_clean">Guitarra limpa</option>
-    <option value="electric_guitar_jazz">Guitarra jazz</option>
-    <option value="acoustic_guitar_steel">Violão aço</option>
-    <option value="acoustic_guitar_nylon">Violão nylon</option>
-    <option value="orchestral_harp">Harpa</option>
-    <option value="ks">Sintético</option>
-  </select>
-  <select id="amb" aria-label="Ambiência">
-    <option value="seco">Seco</option>
-    <option value="ambiente" selected>Ambiente</option>
-    <option value="espacial">Espacial</option>
-  </select>
+<div id="chord"></div>
+<div id="panel" hidden>
+  <label>Tom<select id="key">
+    <option value="0">Dó</option><option value="2">Ré</option><option value="4" selected>Mi</option><option value="5">Fá</option>
+    <option value="7">Sol</option><option value="9">Lá</option><option value="11">Si</option></select></label>
+  <label>Escala<select id="scale">
+    <option value="penta">Pentatônica maior</option><option value="menor" selected>Pentatônica menor</option>
+    <option value="maior">Maior</option><option value="crom">Cromática</option><option value="livre">Livre (sem afinar)</option></select></label>
+  <label>Acompanhamento<select id="acomp">
+    <option value="prog" selected>Acordes (progressão)</option><option value="drone">Drone (nota fixa)</option><option value="off">Desligado</option></select></label>
+  <label>Som<select id="inst">
+    <option value="electric_guitar_clean">Guitarra limpa</option><option value="electric_guitar_jazz">Guitarra jazz</option>
+    <option value="acoustic_guitar_steel">Violão aço</option><option value="acoustic_guitar_nylon">Violão nylon</option>
+    <option value="orchestral_harp">Harpa</option><option value="ks">Sintético</option></select></label>
+  <label>Efeito<select id="amb">
+    <option value="shimmer" selected>Shimmer</option><option value="espacial">Espacial</option>
+    <option value="ambiente">Ambiente</option><option value="seco">Seco</option></select></label>
+  <label>Dedos que tocam<select id="fingers">
+    <option value="ind">Só indicador (melodia)</option><option value="todos">Todos (arpejo)</option></select></label>
   <button id="vid">Vídeo: escuro</button>
   <button id="flip">Trocar câmera</button>
+</div>
+<div id="ui">
+  <button id="mode" class="criar">Modo: CRIAR cordas</button>
+  <button id="harp">Montar harpa</button>
+  <button id="undo">Desfazer</button>
+  <button id="clear">Limpar</button>
+  <button id="cfg">Ajustes</button>
 </div>
 <div id="start"><div>
   <h1>Harpa de Ar</h1>
@@ -80,14 +85,14 @@ const setStatus=t=>statusEl.textContent=t;
 /* ---------- música ---------- */
 const NOTES=['Dó','Dó#','Ré','Ré#','Mi','Fá','Fá#','Sol','Sol#','Lá','Lá#','Si'];
 const SCALES={penta:[0,2,4,7,9],menor:[0,3,5,7,10],maior:[0,2,4,5,7,9,11],crom:[0,1,2,3,4,5,6,7,8,9,10,11],livre:null};
-let scale='penta';
+let scale='menor',key=4;
 function lenToMidi(L){
   const r=Math.max(L/Math.hypot(W,H),0.02);
   let m=57-12*Math.log2(r/0.3);            // 30% da diagonal = Lá3
   m=Math.max(33,Math.min(93,m));
   const sc=SCALES[scale]; if(!sc) return m;
   let best=m,bd=1e9;
-  for(let o=Math.floor(m/12)-1;o<=Math.floor(m/12)+1;o++)for(const s of sc){const c=o*12+s,d=Math.abs(c-m);if(d<bd){bd=d;best=c}}
+  for(let o=Math.floor(m/12)-2;o<=Math.floor(m/12)+1;o++)for(const s of sc){const c=o*12+s+key,d=Math.abs(c-m);if(d<bd){bd=d;best=c}}
   return best;
 }
 const mtof=m=>440*2**((m-69)/12);
@@ -99,7 +104,7 @@ const SF=['sons/','https://gleitz.github.io/midi-js-soundfonts/FluidR3_GM/']; //
 const FLAT=['C','Db','D','Eb','E','F','Gb','G','Ab','A','Bb','B'];
 const sName=m=>FLAT[m%12]+(Math.floor(m/12)-1);
 let inst='electric_guitar_clean';
-let ac=null,bus=null,unlockEl=null,fx=null;
+let ac=null,bus=null,shim=null,padBus=null,unlockEl=null,fx=null;
 function silentWav(){ // 0,5 s de silêncio: faz o iOS tocar como mídia mesmo com a chave de silencioso
   const sr=8000,n=4000,b=new Uint8Array(44+n),v=new DataView(b.buffer),w=(o,s)=>[...s].forEach((c,i)=>b[o+i]=c.charCodeAt(0));
   w(0,'RIFF');v.setUint32(4,36+n,true);w(8,'WAVEfmt ');v.setUint32(16,16,true);v.setUint16(20,1,true);v.setUint16(22,1,true);
@@ -116,6 +121,11 @@ function audioOK(){return ac&&ac.state==='running'}
 function impulse(sec){
   const sr=ac.sampleRate,n=sr*sec|0,b=ac.createBuffer(2,n,sr);
   for(let c=0;c<2;c++){const d=b.getChannelData(c);let lp=0;for(let i=0;i<n;i++){const k=0.35+0.55*(i/n);lp=lp*k+(Math.random()*2-1)*(1-k);d[i]=lp*2.2*Math.pow(1-i/n,2.6)}}
+  return b;
+}
+function bloom(sec){
+  const sr=ac.sampleRate,n=sr*sec|0,b=ac.createBuffer(2,n,sr);
+  for(let c=0;c<2;c++){const d=b.getChannelData(c);let lp=0;for(let i=0;i<n;i++){const t=i/sr;lp=lp*0.5+(Math.random()*2-1)*0.5;d[i]=lp*1.8*(1-Math.exp(-t/0.9))*Math.pow(1-i/n,2)}}
   return b;
 }
 function initAudio(){
@@ -146,11 +156,20 @@ function initAudio(){
   // reverb longo
   const conv=ac.createConvolver();conv.buffer=impulse(4.5);const rv=ac.createGain();
   bus.connect(conv);conv.connect(rv);rv.connect(comp);
-  fx={dry,chorus,dIn,fb,rv};setAmb(amb);
+  // SHIMMER: reverb que "floresce" alimentado por cópias uma e duas oitavas acima
+  shim=ac.createGain();const sconv=ac.createConvolver();sconv.buffer=bloom(7);
+  const shp=ac.createBiquadFilter();shp.type='highpass';shp.frequency.value=600;const shimOut=ac.createGain();
+  shim.connect(sconv);sconv.connect(shp);shp.connect(shimOut);shimOut.connect(comp);
+  dR.connect(shim); // repetições do delay também alimentam o shimmer
+  // acompanhamento
+  padBus=ac.createGain();padBus.gain.value=0.5;padBus.connect(comp);padBus.connect(conv);
+  const padSh=ac.createGain();padSh.gain.value=0.6;padBus.connect(padSh);padSh.connect(shim);
+  fx={dry,chorus,dIn,fb,rv,shimOut};setAmb(amb);
 }
-const AMB={seco:{dry:1,ch:.15,d:0,fb:0,rv:.18},ambiente:{dry:.85,ch:.35,d:.22,fb:.38,rv:.45},espacial:{dry:.7,ch:.5,d:.35,fb:.55,rv:.8}};
-let amb='ambiente';
-function setAmb(k){amb=k;if(!fx)return;const a=AMB[k];fx.dry.gain.value=a.dry;fx.chorus.gain.value=a.ch;fx.dIn.gain.value=a.d;fx.fb.gain.value=a.fb;fx.rv.gain.value=a.rv}
+const AMB={seco:{dry:1,ch:.15,d:0,fb:0,rv:.18,sh:0},ambiente:{dry:.85,ch:.35,d:.22,fb:.38,rv:.45,sh:.25},
+  espacial:{dry:.7,ch:.5,d:.35,fb:.55,rv:.8,sh:.45},shimmer:{dry:.75,ch:.45,d:.28,fb:.45,rv:.6,sh:1}};
+let amb='shimmer';
+function setAmb(k){amb=k;if(!fx)return;const a=AMB[k];fx.dry.gain.value=a.dry;fx.chorus.gain.value=a.ch;fx.dIn.gain.value=a.d;fx.fb.gain.value=a.fb;fx.rv.gain.value=a.rv;fx.shimOut.gain.value=a.sh*1.3}
 
 // amostras: carregadas sob demanda e guardadas
 const samp=new Map(),loading=new Map();
@@ -179,29 +198,91 @@ function ksBuffer(f){
   let zp=0;for(let i=init;i<n;i++){const t=i-P,k=Math.floor(t),fr=t-k,z=y[k]*(1-fr)+y[k+1]*fr;y[i]=g*(0.5*z+0.5*zp);zp=z}
   if(ksCache.size>90)ksCache.delete(ksCache.keys().next().value);ksCache.set(key,b);return b;
 }
+function voice(midi,lvl,pan,dest,attack,bright){
+  const near=Math.max(33,Math.min(93,Math.round(midi))),buf=samp.get(inst+':'+near);
+  const src=ac.createBufferSource(),t=ac.currentTime;
+  if(buf){src.buffer=buf;src.playbackRate.value=2**((midi-near)/12)}
+  else{getSample(near);src.buffer=ksBuffer(mtof(midi));lvl*=0.7}
+  const tone=ac.createBiquadFilter();tone.type='lowpass';tone.frequency.value=bright;tone.Q.value=0.5;
+  const g=ac.createGain();
+  if(attack>0){g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(lvl,t+attack)}else g.gain.setValueAtTime(lvl,t);
+  g.gain.setValueAtTime(lvl,t+3.2);g.gain.linearRampToValueAtTime(0,t+4.5);
+  src.connect(tone);tone.connect(g);
+  let o=g;if(ac.createStereoPanner){const p=ac.createStereoPanner();p.pan.value=Math.max(-1,Math.min(1,pan))*0.7;g.connect(p);o=p}
+  o.connect(dest);src.start(t);src.stop(t+4.6);
+}
 function play(midi,vel,pan){
   if(!ac) return;
   if(ac.state!=='running') ac.resume().catch(()=>{});
-  const near=Math.round(midi),buf=samp.get(inst+':'+near);
-  const src=ac.createBufferSource(),t=ac.currentTime;
-  if(buf){src.buffer=buf;src.playbackRate.value=2**((midi-near)/12)}
-  else{getSample(near);src.buffer=ksBuffer(mtof(midi))}
-  const tone=ac.createBiquadFilter();tone.type='lowpass';tone.frequency.value=1800+vel*9000;tone.Q.value=0.5;
-  const g=ac.createGain(),lvl=(buf?0.9:0.6)*vel;
-  g.gain.setValueAtTime(lvl,t);g.gain.setValueAtTime(lvl,t+3.2);g.gain.linearRampToValueAtTime(0,t+4.5);
-  src.connect(tone);tone.connect(g);
-  let o=g;if(ac.createStereoPanner){const p=ac.createStereoPanner();p.pan.value=Math.max(-1,Math.min(1,pan))*0.7;g.connect(p);o=p}
-  o.connect(bus);src.start(t);src.stop(t+4.6);
+  voice(midi,0.9*vel,pan,bus,0,1800+vel*9000);
+  const sh=AMB[amb].sh;
+  if(sh>0){ // camadas que entram devagar, 1 e 2 oitavas acima, só no shimmer
+    voice(midi+12,(0.3+0.25*vel)*sh,-pan,shim,0.45,7000);
+    voice(midi+24,0.16*sh,pan,shim,1.1,9000);
+  }
 }
+
+/* ---------- acompanhamento (pad) ---------- */
+const PROG={maior:[[0,4,7],[9,0,4],[5,9,0],[7,11,2]],menor:[[0,3,7],[8,0,3],[3,7,10],[10,2,5]]};
+let acomp='prog',chordIdx=0,curChord=null,chordTimer=null;const padVoices=[];
+const isMinor=()=>scale==='menor';
+function padChord(pcs,dur){
+  const t=ac.currentTime,root=(pcs[0]+key)%12,notes=[36+root,48+root];
+  for(const pc of pcs.slice(1)) notes.push(48+((pc+key)%12)+(((pc+key)%12)<root?12:0));
+  notes.push(60+root);
+  const env=ac.createGain();env.gain.setValueAtTime(0,t);env.gain.linearRampToValueAtTime(1,t+2.8);
+  const lp=ac.createBiquadFilter();lp.type='lowpass';lp.frequency.value=900;lp.Q.value=0.6;
+  const lfo=ac.createOscillator(),ld=ac.createGain();lfo.frequency.value=0.09;ld.gain.value=350;lfo.connect(ld);ld.connect(lp.frequency);lfo.start(t);
+  lp.connect(env);env.connect(padBus);
+  const oscs=[lfo];
+  notes.forEach((m,i)=>{
+    for(const [type,det,lv] of [['sawtooth',-7,.035],['sawtooth',7,.035],['sine',0,i===0?.12:.05]]){
+      const o=ac.createOscillator(),g=ac.createGain();o.type=type;o.frequency.value=mtof(m+(type==='sine'&&i>0?12:0));o.detune.value=det;
+      g.gain.value=lv*(i===0?1.2:1);o.connect(g);g.connect(lp);o.start(t);oscs.push(o);
+    }
+  });
+  const v={env,oscs};padVoices.push(v);releasePad(v,t+dur,3.5);
+}
+function releasePad(v,at,rel){
+  const now=ac.currentTime;at=Math.max(at,now);
+  v.env.gain.cancelScheduledValues(at);v.env.gain.setValueAtTime(v.env.gain.value||1,at);v.env.gain.linearRampToValueAtTime(0,at+rel);
+  v.oscs.forEach(o=>{try{o.stop(at+rel+0.1)}catch(e){}});
+  setTimeout(()=>{const i=padVoices.indexOf(v);if(i>=0)padVoices.splice(i,1)},(at-now+rel+0.3)*1000);
+}
+function nextChord(){
+  clearTimeout(chordTimer);if(!ac||acomp==='off'){curChord=null;$('chord').textContent='';return}
+  const list=acomp==='drone'?[[0,7]]:(isMinor()?PROG.menor:PROG.maior);
+  const pcs=list[chordIdx%list.length];chordIdx++;
+  const dur=acomp==='drone'?14:8;
+  curChord=new Set(pcs.map(p=>(p+key)%12));
+  const minor=pcs.length>2&&((pcs[1]-pcs[0]+12)%12)===3;
+  $('chord').textContent=(acomp==='drone'?'Drone em ':'')+NOTES[(pcs[0]+key)%12]+(acomp==='drone'?'':(minor?' menor':' maior'));
+  padChord(pcs,dur);
+  chordTimer=setTimeout(nextChord,dur*1000-300);
+}
+function restartPad(){clearTimeout(chordTimer);if(ac)padVoices.slice().forEach(v=>releasePad(v,ac.currentTime,1.5));chordIdx=0;nextChord()}
 
 /* ---------- cordas e faíscas ---------- */
 const strings=[],sparks=[];
 function retune(s){s.midi=lenToMidi(s.L);s.f=mtof(s.midi);s.hue=hueOf(s.midi)}
-function addString(a,b){
+function addString(a,b,fixed,silent){
   const L=Math.hypot(b.x-a.x,b.y-a.y); if(L<40) return;
   const s={a:{x:a.x,y:a.y},b:{x:b.x,y:b.y},L,t0:-1e9,amp:0,pos:.5,born:performance.now(),last:0,label:0};
-  retune(s);strings.push(s);if(strings.length>32)strings.shift();
-  pluck(s,.5,.45);hint.style.opacity=0;
+  if(fixed!=null){s.midi=fixed;s.f=mtof(fixed);s.hue=hueOf(fixed)}else{retune(s);harp=false}
+  strings.push(s);if(strings.length>32)strings.shift();
+  if(!silent)pluck(s,.5,.45);hint.style.opacity=0;
+}
+let harp=false;
+function buildHarp(gliss){
+  strings.length=0;sparks.length=0;
+  const sc=SCALES[scale]||SCALES.penta,diag=Math.hypot(W,H),Lof=m=>0.3*diag*2**((57-m)/12);
+  const base=Math.min(H-96,$('ui').getBoundingClientRect().top-18),maxL=Math.min(base-70,H*0.62);
+  const ms=[];for(let m=33;m<=93;m++)if(sc.includes(((m-key)%12+12)%12))ms.push(m);
+  let i=ms.findIndex(m=>Lof(m)<=maxL);if(i<0)i=0;
+  const n=Math.min(W<520?8:10,ms.length-i),sel=ms.slice(i,i+n),x0=W*0.1,x1=W*0.9;
+  sel.forEach((m,j)=>{const x=x0+(x1-x0)*(n===1?.5:j/(n-1));addString({x,y:base},{x,y:base-Math.max(48,Lof(m))},m,true)});
+  harp=true;setMode('tocar');
+  if(gliss) strings.forEach((s,j)=>setTimeout(()=>pluck(s,.5,.35),j*90));
 }
 function pluck(s,pos,vel){
   const now=performance.now(); if(now-s.last<90) return;
@@ -256,7 +337,7 @@ async function loadModel(){
   catch(e){landmarker=await HandLandmarker.createFromOptions(fs,opts('CPU'))}
 }
 
-const TIPS=[4,8,12,16,20];
+const TIPS=[4,8,12,16,20];let fingers='ind';const playTips=()=>fingers==='ind'?[8]:TIPS;
 function onResults(res,now){
   const seen=new Set();
   res.landmarks.forEach((lm,i)=>{
@@ -296,7 +377,7 @@ function handLogic(now){
     two=null;
     for(const h of list){
       h.start=null;h.released=false;
-      for(const k of TIPS) if(h.prev[k]&&h.tips[k]) strum(h.prev[k],h.tips[k]);
+      for(const k of playTips()) if(h.prev[k]&&h.tips[k]) strum(h.prev[k],h.tips[k]);
     }
   }
   for(const h of list) for(const k of TIPS) h.prev[k]=h.tips[k];
@@ -320,13 +401,14 @@ cv.addEventListener('pointerup',endPtr);cv.addEventListener('pointercancel',()=>
 let vidAlpha=0.45;
 function drawString(s,now){
   const dx=s.b.x-s.a.x,dy=s.b.y-s.a.y,N=Math.max(12,Math.min(64,s.L/7|0));
-  const act=Math.exp(-(now-s.t0)/700),born=Math.min(1,(now-s.born)/300);
+  const inCh=curChord&&curChord.has(((Math.round(s.midi)%12)+12)%12);
+  const act=Math.max(Math.exp(-(now-s.t0)/700),inCh?0.45:0),born=Math.min(1,(now-s.born)/300);
   ctx.beginPath();
   for(let i=0;i<=N;i++){const p=pointOn(s,i/N,now);i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y)}
   for(const [w,a,l] of [[16,.05+.12*act,55],[6,.16+.3*act,62],[2,.85,88]]){
     ctx.lineWidth=w;ctx.strokeStyle=`hsla(${s.hue},100%,${l}%,${a*born})`;ctx.stroke();
   }
-  for(const e of [s.a,s.b]){ctx.beginPath();ctx.arc(e.x,e.y,3.5,0,7);ctx.fillStyle=`hsla(${s.hue},100%,80%,${.9*born})`;ctx.fill()}
+  for(const e of [s.a,s.b]){ctx.beginPath();ctx.arc(e.x,e.y,inCh?5.5:3.5,0,7);ctx.fillStyle=`hsla(${s.hue},100%,80%,${.9*born})`;ctx.fill()}
 }
 function drawLabel(s,now){
   const t=now-s.label; if(t>1400) return;
@@ -376,7 +458,7 @@ function frame(){
   for(const h of hands.values()){
     if(!h.pts) continue;
     const tipCol=mode==='tocar'?'rgba(120,255,170,.85)':'rgba(170,230,255,.6)';
-    for(const k of (mode==='tocar'?TIPS:[4,8])){const p=h.tips[k]||h.pts[k];ctx.beginPath();ctx.arc(p.x,p.y,mode==='tocar'?6:4,0,7);ctx.fillStyle=tipCol;ctx.fill()}
+    for(const k of (mode==='tocar'?playTips():[4,8])){const p=h.tips[k]||h.pts[k];ctx.beginPath();ctx.arc(p.x,p.y,mode==='tocar'?(fingers==='ind'?9:6):4,0,7);ctx.fillStyle=tipCol;ctx.fill()}
     if(mode==='criar'&&h.pinch){ctx.beginPath();ctx.arc(h.pin.x,h.pin.y,12,0,7);ctx.lineWidth=2;ctx.strokeStyle='rgba(255,255,255,.85)';ctx.stroke()}
   }
   ctx.globalCompositeOperation='source-over';
@@ -388,7 +470,13 @@ function frame(){
 /* ---------- controles ---------- */
 $('undo').onclick=()=>strings.pop();
 $('clear').onclick=()=>{strings.length=0;sparks.length=0};
-$('scale').onchange=e=>{scale=e.target.value;strings.forEach(retune);strings.forEach(s=>s.label=performance.now())};
+function retuneAll(){if(harp)buildHarp(false);else strings.forEach(retune);strings.forEach(s=>s.label=performance.now());restartPad()}
+$('scale').onchange=e=>{scale=e.target.value;retuneAll()};
+$('key').onchange=e=>{key=+e.target.value;retuneAll()};
+$('acomp').onchange=e=>{acomp=e.target.value;restartPad()};
+$('fingers').onchange=e=>fingers=e.target.value;
+$('harp').onclick=()=>buildHarp(true);
+$('cfg').onclick=()=>{$('panel').hidden=!$('panel').hidden};
 function setMode(m){mode=m;two=null;ptr=null;for(const h of hands.values()){h.start=null;h.released=false}const b=$('mode');b.textContent=m==='criar'?'Modo: CRIAR cordas':'Modo: TOCAR';b.className=m;setStatus(m==='criar'?'Belisque e arraste para criar cordas':'Passe os dedos pelas cordas para tocar');clearTimeout(setMode.t);setMode.t=setTimeout(()=>setStatus(''),2200)}
 $('mode').onclick=()=>setMode(mode==='criar'?'tocar':'criar');
 $('inst').onchange=e=>{inst=e.target.value;preloadAll()};
@@ -401,7 +489,7 @@ $('snd').onclick=()=>{unlockAudio();setTimeout(()=>play(64,.6,0),60)};
 function chime(){[57,64,69].forEach((m,i)=>setTimeout(()=>play(m,.5,i-1),i*110))}
 $('go').onclick=async()=>{
   initAudio();try{await ac.resume()}catch(e){}
-  chime();preloadAll();
+  chime();preloadAll();restartPad();buildHarp(false);hint.style.opacity=.85;setTimeout(()=>hint.style.opacity=0,9000);
   $('start').remove();requestAnimationFrame(frame);
   setStatus('Abrindo câmera…');
   try{await startCam()}catch(e){
